@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // 用 vi.mock 替换 chatCompletionStream
 const fakeStream = vi.hoisted(() => vi.fn());
@@ -28,8 +28,15 @@ const fakeClient = {} as never; // stream 被 mock 掉,不直接用
 
 describe('runTurn', () => {
   // vi.hoisted 在文件加载时创建一次 fakeStream,需要每个测试清空计数
+  const tmpCwds: string[] = [];
   beforeEach(() => {
     fakeStream.mockReset();
+  });
+  afterEach(async () => {
+    const fs = await import('node:fs/promises');
+    await Promise.all(
+      tmpCwds.splice(0).map((d) => fs.rm(d, { recursive: true, force: true })),
+    );
   });
 
   it('LLM 只返回文本时,自然停止', async () => {
@@ -83,6 +90,7 @@ describe('runTurn', () => {
     const tmpCwd = await import('node:fs/promises').then((m) =>
       m.mkdtemp('/tmp/agent-loop-'),
     );
+    tmpCwds.push(tmpCwd);
     await import('node:fs/promises').then((m) =>
       m.writeFile(`${tmpCwd}/a.txt`, 'hello'),
     );
@@ -141,6 +149,7 @@ describe('runTurn', () => {
     const tmpCwd = await import('node:fs/promises').then((m) =>
       m.mkdtemp('/tmp/agent-loop-'),
     );
+    tmpCwds.push(tmpCwd);
     const r = await runTurn({
       messages: [{ role: 'user', content: 'read' }],
       tools: [confirmStub],
@@ -180,6 +189,7 @@ describe('runTurn', () => {
     const tmpCwd = await import('node:fs/promises').then((m) =>
       m.mkdtemp('/tmp/agent-loop-'),
     );
+    tmpCwds.push(tmpCwd);
     const r = await runTurn({
       messages: [{ role: 'user', content: 'escape' }],
       tools: [readFileTool],
