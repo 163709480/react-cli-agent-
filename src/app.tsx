@@ -2,6 +2,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { Box, useApp, useInput } from 'ink';
 import { MessageList, type DisplayMessage } from './components/MessageList.js';
 import { InputBox } from './components/InputBox.js';
+import { ToolTrace } from './components/ToolTrace.js';
 import { runTurn } from './agent/loop.js';
 import { readFileTool } from './tools/read_file.js';
 import { writeFileTool } from './tools/write_file.js';
@@ -34,6 +35,8 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt }: AppProps) {
   const clientRef = useRef<OpenAI | null>(null);
   const configRef = useRef<ReturnType<typeof loadConfig> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const confirmResolversRef = useRef<Map<string, (ok: boolean) => void>>(new Map());
+  const [pending, setPending] = useState<DisplayMessage | null>(null);
 
   useEffect(() => {
     const cfg = loadConfig();
@@ -52,6 +55,20 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt }: AppProps) {
   useInput((input, key) => {
     if (key.ctrl && input === 'c' && busy && abortRef.current) {
       abortRef.current.abort();
+      return;
+    }
+    if (pending) {
+      if (input === 'y' || input === 'Y') {
+        const r = confirmResolversRef.current.get(pending.id);
+        if (r) r(true);
+        confirmResolversRef.current.delete(pending.id);
+        setPending(null);
+      } else if (input === 'n' || input === 'N') {
+        const r = confirmResolversRef.current.get(pending.id);
+        if (r) r(false);
+        confirmResolversRef.current.delete(pending.id);
+        setPending(null);
+      }
     }
   });
 
@@ -73,12 +90,22 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt }: AppProps) {
         cwd,
         yolo,
         onEvent: (ev) => applyEvent(ev, assistantId),
-        onConfirm: async (_tc: ToolCall) => {
-          // 简化:CLI 模式下默认 yolo 跳过 confirm,否则总是同意
-          // 真正的"y/n 询问"留给前端组件(此处用 yolo 控制)
-          if (yolo) return true;
-          return true; // TODO: 在 Task 13 加真正的 y/n 询问
-        },
+        onConfirm: (tc) =>
+          new Promise<boolean>((resolve) => {
+            if (yolo) {
+              // yolo 模式:跳过 confirm,但 dangerous 也跳过(用户已知风险)
+              resolve(true);
+              return;
+            }
+            const id = uuid();
+            confirmResolversRef.current.set(id, resolve);
+            setPending({
+              id,
+              role: 'tool',
+              toolName: tc.function.name,
+              toolResult: `[pending y/n] ${tc.function.arguments}`,
+            });
+          }),
         signal: abort.signal,
         client: clientRef.current,
         model: configRef.current.openaiModel,
@@ -132,6 +159,7 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt }: AppProps) {
       <Box flexDirection="column" flexGrow={1}>
         <MessageList messages={display} />
       </Box>
+      {pending && <ToolTrace name={pending.toolName ?? '?'} args={pending.toolResult} pending onConfirm={() => {}} />}
       <Box marginTop={1}>
         <InputBox onSubmit={handleUserInput} disabled={busy} />
       </Box>
