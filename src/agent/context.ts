@@ -38,7 +38,7 @@ export async function compress(
   const summary = await summarizer(middle);
   const summaryMsg: Message = {
     role: 'user',
-    content: summary,
+    content: `[Summary of earlier conversation]\n${summary}`,
   };
 
   const result: Message[] = [];

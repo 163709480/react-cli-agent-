@@ -51,9 +51,11 @@ describe('compress', () => {
     const out = await compress(msgs, async () => '<<SUMMARY>>');
     // system 保留
     expect(out[0]).toEqual({ role: 'system', content: 'sys' });
-    // 中间有 summary
-    const summary = out.find((m) => m.content === '<<SUMMARY>>');
+    // 中间有 summary(包含 prefix)
+    const summary = out.find((m) => typeof m.content === 'string' && m.content.includes('<<SUMMARY>>'));
     expect(summary).toBeDefined();
+    // summary 标记前缀
+    expect(summary?.content).toMatch(/\[Summary of earlier conversation\]/);
     // 最后 6 条保留
     expect(out[out.length - 1].content).toBe('recent3');
     // 总数 = 1 system + 1 summary + 6 recent = 8
