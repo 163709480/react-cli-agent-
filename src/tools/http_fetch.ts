@@ -30,7 +30,7 @@ async function execute(input: z.infer<typeof schema>, ctx: ToolCtx) {
   };
 }
 
-export const httpFetchTool: ToolDef<z.infer<typeof schema>> = {
+export const httpFetchTool: ToolDef<z.infer<typeof schema>, z.input<typeof schema>> = {
   name: 'http_fetch',
   description:
     'HTTP 请求,默认只 GET。POST 需要 --allow-mutations flag。响应截断 100KB。',

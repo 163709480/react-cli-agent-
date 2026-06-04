@@ -75,7 +75,7 @@ async function execute(input: z.infer<typeof schema>, ctx: ToolCtx) {
   return { matches };
 }
 
-export const grepTool: ToolDef<z.infer<typeof schema>> = {
+export const grepTool: ToolDef<z.infer<typeof schema>, z.input<typeof schema>> = {
   name: 'grep',
   description:
     '在 cwd 内用 ripgrep(优先)/grep 搜索正则。返回 {file, line, text} 列表。',

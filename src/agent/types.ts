@@ -1,4 +1,4 @@
-import type { ZodType } from 'zod';
+import type { ZodType, ZodTypeDef } from 'zod';
 
 /** LLM API 返回的原始消息角色 */
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
@@ -13,13 +13,20 @@ export interface ToolDescriptor {
   };
 }
 
-/** 工具定义(开发者写) */
-export interface ToolDef<I = unknown, O = unknown> {
+/**
+ * 工具定义(开发者写)。
+ * schema 是 zod schema,参数化为 input/output 双类型位:
+ *   - 第 1 个泛型 = output(I) — execute 拿到的
+ *   - 第 3 个泛型 = input(In) — 外部调用方传进来的
+ * 默认 I=In(常见情形),需要支持 .default() 的工具可显式分开
+ * (如 In={max_results?: number}, I={max_results: number})。
+ */
+export interface ToolDef<I = unknown, In = I> {
   name: string;
   description: string;
   safety: 'safe' | 'confirm' | 'dangerous';
-  schema: ZodType<I>;
-  execute(input: I, ctx: ToolCtx): Promise<O>;
+  schema: ZodType<I, ZodTypeDef, In>;
+  execute(input: I, ctx: ToolCtx): Promise<unknown>;
 }
 
 /** 工具执行上下文 */
