@@ -66,6 +66,7 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
   const [phaseStartMs, setPhaseStartMs] = useState<number>(0);
   const [phaseToolName, setPhaseToolName] = useState<string | undefined>(undefined);
   const [currentTokens, setCurrentTokens] = useState<{ promptTokens: number; completionTokens: number } | undefined>(undefined);
+  const [compressStatus, setCompressStatus] = useState<{ before: number; after?: number; startedAt: number } | null>(null);
 
   const clientRef = useRef<OpenAI | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -225,6 +226,15 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
         }
         return next;
       });
+      // 解析 [context compressed: X → Y] 给 compressStatus(可能在 phase=compressing 中,也可能在收尾 text_delta 里)
+      if (ev.delta.includes('[context compressed:')) {
+        const m = ev.delta.match(/\[context compressed:\s*(\d+)\s*→\s*(\d+)/);
+        if (m) {
+          setCompressStatus((cur) =>
+            cur ? { ...cur, before: parseInt(m[1], 10), after: parseInt(m[2], 10) } : { before: parseInt(m[1], 10), after: parseInt(m[2], 10), startedAt: Date.now() },
+          );
+        }
+      }
       return;
     }
     if (ev.type === 'tool_call_start') {
@@ -262,14 +272,22 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
         setPhaseStartMs(Date.now());
         setPhaseToolName(undefined);
         setCurrentTokens(undefined);
+        setCompressStatus(null);
       } else if (ev.phase === 'executing') {
         setPhase('executing');
         setPhaseStartMs(Date.now());
         setPhaseToolName(ev.toolName);
+        setCompressStatus(null);
+      } else if (ev.phase === 'compressing') {
+        setPhase('compressing');
+        setPhaseStartMs(Date.now());
+        // before 暂估,等 text_delta 里 [context compressed: X → Y] 解析
+        setCompressStatus({ before: 0, startedAt: Date.now() });
       } else {
         setPhase('idle');
         setPhaseToolName(undefined);
         setCurrentTokens(undefined);
+        setCompressStatus(null);
       }
       return;
     }
@@ -306,6 +324,7 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
           phaseStartMs={phaseStartMs}
           tokens={currentTokens}
           toolName={phaseToolName}
+          compressStatus={compressStatus ?? undefined}
         />
       )}
       {activeTool && activeTool.state !== 'pending' && (
