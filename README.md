@@ -1,183 +1,240 @@
 # agent
 
-本地终端 ReAct agent,接入任意 OpenAI 兼容 LLM(DeepSeek / Moonshot / Ollama 等)。
+[![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
+[![Node](https://img.shields.io/badge/node-%E2%89%A520.0.0-brightgreen.svg)](https://nodejs.org)
+[![Tests](https://img.shields.io/badge/tests-123%20passed-brightgreen.svg)](#testing)
+[![TypeScript](https://img.shields.io/badge/TypeScript-5.5-blue.svg)](https://www.typescriptlang.org/)
 
-## 用法
+A local terminal **ReAct agent** built from scratch in TypeScript + Ink.
+Connects to any OpenAI-compatible LLM (DeepSeek / Moonshot / Ollama / vLLM / …).
+Inspired by Claude Code / Gemini CLI, but with no LangChain / Vercel AI SDK — the
+ReAct loop, tool calling, streaming, and audit logging are all hand-written.
+
+[中文文档](README.zh.md) · [Design docs](docs/) · [License (AGPL-3.0)](LICENSE)
+
+---
+
+## ✨ Features
+
+- **Hand-written ReAct loop** — no agent framework, full control over behavior
+- **Streaming UX** — type-by-type text, dynamic tool status, Claude Code-style status bar
+- **File sandbox** — paths constrained to `cwd`, write-extension allowlist, realpath symlink resolution
+- **Dangerous-tool confirmation** — `write_file` / `edit_file` / `delete_file` / `http_fetch` show
+  a **prominent confirm box** (red double border + ⚠ + diff preview). The user **must type `y`**
+  to confirm; `Enter` alone does nothing.
+- **Compliance audit log** — every session writes a tamper-proof **JSONL with SHA-256 hash chain**
+  to `~/.agent/audit/<sessionId>.jsonl` by default. Auditors can independently verify with
+  `npx tsx src/audit/verifyChain.ts <file>`.
+- **Provider-agnostic** — OpenAI Chat Completions protocol. Switch providers via `--provider deepseek`
+  or just `OPENAI_BASE_URL`.
+- **Real summarization** — long sessions trigger a real LLM-driven summary; fallback to a
+  conservative truncation if it fails.
+
+---
+
+## 📦 Install
 
 ```bash
-# 装依赖
+git clone https://github.com/<owner>/agent.git
+cd agent
 npm install
-
-# 配 .env(参考 .env.example)
 cp .env.example .env
-$EDITOR .env
+$EDITOR .env       # set OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL
+```
 
-# 启动 REPL
+Requires **Node.js ≥ 20**.
+
+---
+
+## 🚀 Usage
+
+### Interactive REPL
+
+```bash
 npm run dev
-
-# 单次 headless
-npm run dev -- "修复 foo.ts 里的拼写错误"
-
-# 跳过所有确认(脚本场景)
-npm run dev -- --yolo "重命名所有 *.js 为 *.ts"
-
-# 显式选择 provider(覆盖 env / json config)
-# 当前仅支持 deepseek(也是默认值)
-npm run dev -- --provider deepseek "列出 src 下的 TypeScript 文件"
-
-# 未知 provider 会立即报错并 exit 2
-npm run dev -- --provider ollama
 ```
 
-## 合规审计(默认开启)
+Type a task, hit Enter. The agent will:
+1. Stream LLM response token by token
+2. Decide whether to call a tool (read_file / grep / glob / write_file / …)
+3. Show a confirmation box for any destructive operation
+4. Loop until the LLM signals `stop`
 
-agent 默认**开启**全链路审计日志,满足国企合规审计与责任追溯要求。
+### Single-shot headless
 
 ```bash
-# 默认:写到 ~/.agent/audit/<sessionId>.jsonl
-npm run dev -- "列出 src 目录"
-
-# 自定义路径
-npm run dev -- --audit-log /var/log/agent/x.jsonl "列出 src 目录"
-
-# 关闭审计(开发场景)
-npm run dev -- --no-audit-log "列出 src 目录"
+npm run dev -- "List all TypeScript files under src/"
 ```
 
-### 审计文件内容
+### Common flags
 
-每行一个 JSON 事件,带 hash chain 防篡改:
-
-| 字段 | 含义 |
+| Flag | Effect |
 |---|---|
-| `ts` | ISO 8601 时间戳 |
-| `sessionId` | uuid v4,本次启动唯一 |
-| `pid` | 进程号 |
-| `seq` | 本会话内单调递增序号 |
-| `prevHash` | 上一行的 `hash` |
-| `hash` | `sha256:` + hex(sha256(canonicalJson(payloadWithoutHash) + prevHash)) |
+| `--yolo` | Skip confirmation for `confirm` tools. `dangerous` tools still require `y`. |
+| `--allow-mutations` | Permit `http_fetch POST` and other mutation effects |
+| `--provider <name>` | Pick a built-in provider preset (e.g. `deepseek`) |
+| `--cwd <path>` | Override the working directory |
+| `--audit-log <path?>` | Write audit log to `<path>` (omit value for default `~/.agent/audit/`) |
+| `--no-audit-log` | Disable audit log entirely (dev scenario) |
+| `-- "prompt"` | Positional prompt = headless mode, exit after one turn |
 
-事件类型:`session_start` / `session_end` / `user_prompt` / `phase` /
-`text_delta` / `tool_call_start` / `tool_call_end` / `user_confirm` /
-`llm_usage` / `done` / `error`。`user_confirm` 记录每次 y/n 决定及
-`latencyMs`;`tool_call_start` 同时记录解析后的 `args`(解析失败时
-`argsParseError: true` 保留原字符串)。
-
-### 审计员独立验证
+### Examples
 
 ```bash
-# 验证一条 .jsonl 的 hash chain 完好
-npx tsx src/audit/verifyChain.ts /path/to/<sessionId>.jsonl
-# 输出: {"ok":true,"lines":<N>}
+# Default: DeepSeek, audit log on
+npm run dev -- "List src/agent directory"
 
-# 篡改后验证会失败
-# sed -i '' 's/某字符/某字符x/' /path/to/<sessionId>.jsonl
-# npx tsx src/audit/verifyChain.ts /path/to/<sessionId>.jsonl
-# 输出: {"ok":false,"lines":<N>,"firstBreakSeq":<S>,"reason":"hash-mismatch"}
+# Write a file (will show red confirm box)
+npm run dev -- "Create README.md describing this project"
+
+# HTTP fetch (dangerous, always confirms)
+npm run dev -- --allow-mutations "POST https://api.example.com/webhook with body {...}"
+
+# Disable audit
+npm run dev -- --no-audit-log "Quick question"
 ```
 
-### 失败兜底
+---
 
-若审计目录不可写(权限/磁盘满),agent 在 stderr 打印一行
-`[audit] disabled: <err>` 后降级为 no-op,**不会阻塞 agent 运行**。
-LLM 调用的 token 使用会同时通过 `onUsage` 回调透传,可在自定义 UI
-中复用。
+## 🛠 Tools
 
-### 事件解读示例
-
-下面是一段实测的 `.jsonl` 节选(5 条事件,seq 14-18),完整还原一次
-"LLM 决定调 `glob` 列目录 → 工具返回 7 个文件 → 重新进入思考阶段"。
-
-```jsonl
-{"type":"phase","phase":"executing","toolName":"glob","ts":"...","seq":14,"prevHash":"sha256:7b455881...","hash":"sha256:ab208c83..."}
-{"type":"tool_call_start","toolCallId":"call_00_g0CVBLT42j81VYuy51Wc6572","toolName":"glob","args":{"pattern":"*"},"argsParseError":false,"ts":"...","seq":15,"prevHash":"sha256:ab208c83...","hash":"sha256:6a9eae12..."}
-{"type":"llm_usage","callIndex":2,"promptTokens":1005,"completionTokens":42,"finishReason":"stop","ts":"...","seq":16,"prevHash":"sha256:6a9eae12...","hash":"sha256:7d170748..."}
-{"type":"tool_call_end","toolCallId":"call_00_g0CVBLT42j81VYuy51Wc6572","result":"{\n  \"files\": [\"README.md\",...]\n}","resultBytes":167,"isError":false,"ts":"...","seq":17,"prevHash":"sha256:7d170748...","hash":"sha256:9a09c6c8..."}
-{"type":"phase","phase":"thinking","ts":"...","seq":18,"prevHash":"sha256:9a09c6c8..."}
-```
-
-| seq | type | 含义 |
+| Tool | Safety | Function |
 |---|---|---|
-| 14 | `phase=executing` | loop 切到"执行"态,不是工具调用本身;为 seq 15 做铺垫 |
-| 15 | `tool_call_start` | LLM 这一轮决定调 `glob`,参数 `pattern: "*"`。`toolCallId` 关联 seq 17 的 end。`argsParseError: false` 说明 LLM 返回的 arguments 是合法 JSON |
-| 16 | `llm_usage` | 与 seq 15 **同一毫秒** — stream 吐完 `tool_call_start` 后立刻给 `done`,loop 在 done 回调里 yield 此事件。`callIndex: 2` = 第 2 次 LLM 调用;`finishReason: "stop"` 而非 `"tool_calls"`(DeepSeek 等国产模型常给 `stop`,**审计忠实记录原值**) |
-| 17 | `tool_call_end` | 8ms 后工具完成;返回 7 个文件名(README/analysis/hello-world/package-lock/package/tsconfig/vitest.config);**没有** `.env.example` / `.gitignore` → 印证 `glob` 配的是 `dot: false`。`resultBytes: 167` 量化"agent 看到多少数据",**防 LLM 被 prompt injection 灌超大文件** |
-| 18 | `phase=thinking` | 工具结果已回灌,重新进入"思考"阶段,准备发起第 3 次 LLM 调用 |
+| `read_file` | safe | Read a file (1MB truncation, offset/limit) |
+| `write_file` | confirm | Full overwrite, auto `mkdir -p` |
+| `edit_file` | confirm | String replace, `old_string` must be unique |
+| `grep` | safe | ripgrep preferred, grep fallback |
+| `glob` | safe | fast-glob |
+| `http_fetch` | **dangerous** | GET/POST, 100KB truncation |
+| `delete_file` | **dangerous** | Permanent delete (refuses directories) |
 
-**时间轴**:
+> `safe` tools never prompt. `confirm` tools show a yellow bordered box.
+> `dangerous` tools show a **red double-bordered box with `⚠ DANGEROUS ACTION`**
+> and a full change preview (old/new content, URL+method, etc.). You **must
+> type the letter `y`** to confirm — the `Enter` key does nothing.
 
-```
-T+0ms    phase=executing(glob)         # loop 切态
-T+2ms    tool_call_start  glob(*)      # LLM 决定
-T+2ms    llm_usage  1005→42 stop       # 本轮 LLM 统计
-T+10ms   tool_call_end  7 files 167B   # 工具返回
-T+11ms   phase=thinking                # 回灌,等 LLM 再想
-```
+---
 
-整段 ~11ms。审计**忠实记录事件实际产生时刻**(毫秒级),不强制按 LLM
-边界对齐 — 事故复盘时能精准判断"用户看着 glob 那条命令,T+10ms 拿到
-结果,中间没卡"还是"中间等了 3 秒才回来 → LLM 慢 / 工具慢"。
+## 📋 Compliance Audit
 
-**链完整性核对**:`seq N 的 prevHash === seq N-1 的 hash`(创世行除外,
-其 `prevHash === hash`)。上面 5 条全链自洽,可直接跑
-`verifyChain` 通过。
-
-### 常用 jq 模式
+Every session produces a tamper-proof **JSONL** with a SHA-256 hash chain.
 
 ```bash
-# 只看 user 提问 + AI 文字回复
-jq -r 'select(.type=="user_prompt" or .type=="text_delta") | [.ts, .type, (.content // .delta)] | @tsv' <file>
+# Default location
+~/.agent/audit/<sessionId>.jsonl
 
-# 只看工具调用 + 用户确认
+# Custom path
+npm run dev -- --audit-log /var/log/agent/x.jsonl "..."
+
+# Disable
+npm run dev -- --no-audit-log "..."
+```
+
+Event types: `session_start` / `user_prompt` / `phase` / `text_delta` /
+`tool_call_start` / `user_confirm` / `tool_call_end` / `llm_usage` / `done` /
+`error` / `session_end`.
+
+### Auditor verification
+
+```bash
+npx tsx src/audit/verifyChain.ts <path-to-jsonl>
+# { ok: true, lines: <N> }           exit 0
+# { ok: false, lines: <N>, firstBreakSeq: <S>, reason: "<R>" }   exit 1
+```
+
+Failure reasons: `hash-mismatch` (payload tampered), `prev-hash-mismatch`
+(previous row tampered), `non-monotonic-seq` (row deleted),
+`parse-error` (malformed JSON), `missing-field` (hash/prevHash/seq absent).
+
+### Reading logs
+
+```bash
+# Tool calls + user confirmations
 jq -c 'select(.type=="tool_call_start" or .type=="tool_call_end" or .type=="user_confirm")' <file>
 
-# 只看 LLM 调用统计
+# LLM token usage
 jq -c 'select(.type=="llm_usage") | {ts, callIndex, promptTokens, completionTokens, finishReason}' <file>
-
-# 12:00 之后的事件
-jq -c 'select(.ts >= "2026-06-05T12:00:00Z")' <file>
-
-# 跨 session 列表
-jq -c 'select(.type=="session_start") | {ts, sessionId, model, provider}' ~/.agent/audit/*.jsonl
 ```
 
-完整 spec 见 `docs/superpowers/specs/2026-06-05-audit-log-design.md`。
+Full design: [`docs/superpowers/specs/2026-06-05-audit-log-design.md`](docs/superpowers/specs/2026-06-05-audit-log-design.md).
 
-## 工具
+---
 
-| 工具 | safety | 功能 | 备注 |
-|---|---|---|---|
-| `read_file` | safe | 读文件,>1MB 截断,offset/limit | 路径必须在 cwd 内 |
-| `write_file` | confirm | 完全覆盖,自动 mkdir | 后缀白名单(`.md` `.ts` `.json` 等) |
-| `edit_file` | confirm | 字符串精确替换,`old_string` 唯一 | 同上 |
-| `grep` | safe | ripgrep 优先,grep 兜底 | 收敛到 cwd |
-| `glob` | safe | fast-glob | base 必须可解析进 cwd |
-| `http_fetch` | **dangerous** | GET/POST,响应截断 100KB | POST 需要 `--allow-mutations` |
-| `delete_file` | **dangerous** | 永久删除文件 | **禁止删目录**;yolo 也无法跳过 |
+## ⚙️ Configuration
 
-### 危险操作确认(规则)
+Priority: `CLI flag` > `env var` > `~/.agent/config.json` > built-in default.
 
-**所有 `confirm` / `dangerous` 工具调用前,UI 弹出醒目确认框**:
+| Key | Env var | Default |
+|---|---|---|
+| `openaiApiKey` | `OPENAI_API_KEY` | (required) |
+| `openaiBaseUrl` | `OPENAI_BASE_URL` | `https://api.deepseek.com/v1` |
+| `openaiModel` | `OPENAI_MODEL` | `deepseek-chat` |
+| `maxContextTokens` | `AGENT_MAX_CONTEXT_TOKENS` | `120000` |
+| `writeableExts` | (config file only) | `['.md','.ts','.tsx','.js','.jsx','.json','.yaml','.yml','.toml','.txt']` |
 
-- **颜色分级**:`confirm` 黄色边框,`dangerous` 红色双线边框 + `⚠ DANGEROUS ACTION` 标
-- **变更预览**:
-  - `write_file` → 展示旧内容(若存在) + 新内容前 200 字符
-  - `edit_file` → `-old_string` / `+new_string` diff
-  - `delete_file` → 路径 + 字节数 + 内容前 100 字符
-  - `http_fetch` → URL + method + body 预览
-- **必须显式输入 `y` / `Y` 才确认**:`Enter` 键无效,防误碰
-- **`--yolo` 跳过 `confirm` 工具(`write_file` / `edit_file`),但 `dangerous` 工具(`http_fetch` / `delete_file`)仍需确认**
+Example `~/.agent/config.json`:
 
-> 这是"写库 / 删文件 / 发版 / 调用外部 API"必须弹醒目确认框的硬性约束;`safe` 工具(`read_file` / `grep` / `glob`)不弹框。
+```json
+{
+  "openaiModel": "deepseek-chat",
+  "maxContextTokens": 120000,
+  "writeableExts": [".md", ".ts", ".json"]
+}
+```
 
-## 测试
+---
+
+## 🧪 Testing
 
 ```bash
-npm test
-npm run typecheck
+npm test           # 123 tests across 21 files
+npm run typecheck  # tsc --noEmit, must be clean
 ```
 
-## 设计文档
+---
 
-- `docs/superpowers/specs/2026-06-04-terminal-agent-design.md`
-- `docs/superpowers/plans/2026-06-04-terminal-agent.md`
+## 🏗 Architecture
+
+```
+UI layer (Ink + React)
+  src/cli.tsx → src/app.tsx → src/components/*
+                ↓ AgentEvent
+Agent core (hand-written ReAct)
+  src/agent/loop.ts ← src/agent/context.ts (compress)
+  src/agent/schema.ts (zod → JSON Schema)
+  src/agent/tools.ts (registry)
+                ↓
+LLM adapter ───── Tools ───── Sandbox
+  src/llm/         src/tools/   src/safety/
+  (OpenAI compat)  (6+1 tools)  (path/extension)
+                ↓
+Audit (compliance)
+  src/audit/  (canonical JSON, SHA-256 hash chain, JSONL sink)
+```
+
+Design docs in [`docs/superpowers/`](docs/superpowers/).
+
+---
+
+## 🤝 Contributing
+
+PRs welcome! See [`CONTRIBUTING.md`](CONTRIBUTING.md) for dev setup, code style, and the PR process.
+For security issues, read [`SECURITY.md`](SECURITY.md) — please do not file public issues for
+vulnerabilities.
+
+---
+
+## 📜 License
+
+**AGPL-3.0** — see [`LICENSE`](LICENSE).
+
+This is a strong copyleft license. If you run a modified version of this agent as a network
+service (e.g. a hosted agent product), you **must** publish the source of your modifications
+to your users under the same license. See section 13 of the AGPL for details.
+
+---
+
+## 🗺 Roadmap
+
+Tracked in [`docs/NEXT_STEPS_AND_FEATURE_DESIGN.md`](docs/NEXT_STEPS_AND_FEATURE_DESIGN.md).
+Priorities: resource guards (`--max-turns`), session persistence, additional provider presets.

@@ -1,10 +1,16 @@
 {
   "name": "agent",
   "version": "0.1.0",
-  "private": true,
+  "private": false,
+  "description": "Local terminal ReAct agent with OpenAI-compatible LLM support, file sandbox, and tamper-proof audit logging (AGPL-3.0).",
+  "license": "AGPL-3.0",
+  "author": "agent",
   "type": "module",
   "bin": {
     "agent": "./dist/cli.js"
+  },
+  "engines": {
+    "node": ">=20.0.0"
   },
   "scripts": {
     "dev": "tsx src/cli.tsx",
