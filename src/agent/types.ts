@@ -64,9 +64,9 @@ export type AgentEvent =
   | { type: 'text_delta'; delta: string }
   | { type: 'tool_call_start'; toolCall: ToolCall }
   | { type: 'tool_call_end'; toolCallId: string; result: string; error?: string }
-  | { type: 'done'; finishReason: 'stop' | 'length' | 'abort' | 'error'; usage?: { promptTokens: number; completionTokens: number } }
+  | { type: 'done'; finishReason: 'stop' | 'length' | 'abort' | 'error' | 'limit'; usage?: { promptTokens: number; completionTokens: number } }
   | { type: 'error'; error: string }
-  | { type: 'phase'; phase: 'thinking' | 'executing' | 'idle'; toolName?: string }
+  | { type: 'phase'; phase: 'thinking' | 'executing' | 'idle' | 'compressing'; toolName?: string }
   | { type: 'user_confirm'; toolCallId: string; toolName: string; approved: boolean; latencyMs: number }
   | { type: 'llm_usage'; callIndex: number; promptTokens: number; completionTokens: number; finishReason: string };
 
@@ -89,10 +89,21 @@ export interface RunTurnInput {
   auditSink?: AuditSink;
   /** 可选 LLM token 用量回调(每轮 LLM 调用结束时触发,供审计 sink 落 llm_usage 事件) */
   onUsage?: (u: { promptTokens: number; completionTokens: number; finishReason: string }) => void;
+  /** 资源护栏;不传 → 默认 maxTurns=12, maxToolCalls=30 */
+  limits?: {
+    maxTurns?: number;
+    maxToolCalls?: number;
+  };
 }
 
 /** Loop 输出 */
 export interface RunTurnResult {
   messages: Message[];
-  finishReason: 'stop' | 'length' | 'abort' | 'error';
+  finishReason: 'stop' | 'length' | 'abort' | 'error' | 'limit';
+  metrics?: {
+    llmTurns: number;
+    toolCalls: number;
+    compressions: number;
+    hotCuts: number;
+  };
 }
