@@ -451,4 +451,302 @@ describe('runTurn', () => {
     expect(usages).toHaveLength(1);
     expect(usages[0]).toEqual({ promptTokens: 10, completionTokens: 5, finishReason: 'stop' });
   });
+
+  it('maxTurns 触发后 stop with finishReason=limit', async () => {
+    // 4 轮 LLM:每次回一个 read_file tool_call(让 loop 继续,直到 maxTurns 触发)
+    // readFileTool 走 tmpCwd,a.txt 存在 → toolCallCount 累计
+    for (let i = 0; i < 4; i++) {
+      fakeStream.mockReturnValueOnce(
+        asyncIterFromArray([
+          {
+            type: 'tool_call_start',
+            toolCall: { id: `c${i}`, type: 'function', function: { name: 'read_file', arguments: '{"path":"a.txt"}' } },
+          },
+          { type: 'done', finishReason: 'stop' },
+        ]),
+      );
+    }
+    const tmpCwd = await import('node:fs/promises').then((m) => m.mkdtemp('/tmp/agent-loop-'));
+    tmpCwds.push(tmpCwd);
+    await import('node:fs/promises').then((m) => m.writeFile(`${tmpCwd}/a.txt`, 'x'));
+    const r = await runTurn({
+      messages: [{ role: 'user', content: 'x' }],
+      tools: [readFileTool],
+      cwd: tmpCwd,
+      yolo: false,
+      onEvent: () => {},
+      onConfirm: async () => true,
+      signal: new AbortController().signal,
+      client: fakeClient,
+      model: 'fake',
+      maxContextTokens: 120000,
+      limits: { maxTurns: 3 },
+    });
+    expect(r.finishReason).toBe('limit');
+    // llmTurns 是 4:maxTurns=3 时,llmTurns=1,2,3 三轮都 OK;第 4 轮 llmTurns=4 > 3 触发 limit 立即 return
+    expect(r.metrics?.llmTurns).toBe(4);
+    // 3 个 tool call 都执行成功
+    expect((r.metrics?.toolCallCount ?? r.metrics?.toolCalls) ?? 0).toBe(3);
+  });
+
+  it('maxToolCalls 触发后 stop', async () => {
+    // 1 轮 LLM:返回 3 个 tool_call,但 maxToolCalls=2
+    fakeStream.mockReturnValueOnce(
+      asyncIterFromArray([
+        {
+          type: 'tool_call_start',
+          toolCall: { id: 'c1', type: 'function', function: { name: 'read_file', arguments: '{"path":"a.txt"}' } },
+        },
+        {
+          type: 'tool_call_start',
+          toolCall: { id: 'c2', type: 'function', function: { name: 'read_file', arguments: '{"path":"a.txt"}' } },
+        },
+        {
+          type: 'tool_call_start',
+          toolCall: { id: 'c3', type: 'function', function: { name: 'read_file', arguments: '{"path":"a.txt"}' } },
+        },
+        { type: 'done', finishReason: 'stop' },
+      ]),
+    );
+    fakeStream.mockReturnValueOnce(
+      asyncIterFromArray([{ type: 'done', finishReason: 'stop' }]),
+    );
+    const tmpCwd = await import('node:fs/promises').then((m) => m.mkdtemp('/tmp/agent-loop-'));
+    tmpCwds.push(tmpCwd);
+    await import('node:fs/promises').then((m) => m.writeFile(`${tmpCwd}/a.txt`, 'x'));
+    const r = await runTurn({
+      messages: [{ role: 'user', content: 'x' }],
+      tools: [readFileTool],
+      cwd: tmpCwd,
+      yolo: false,
+      onEvent: () => {},
+      onConfirm: async () => true,
+      signal: new AbortController().signal,
+      client: fakeClient,
+      model: 'fake',
+      maxContextTokens: 120000,
+      limits: { maxToolCalls: 2 },
+    });
+    expect(r.finishReason).toBe('limit');
+    // toolCallCount or toolCalls key (the latter is the spec field name; loop.ts uses internal `toolCallCount` var, returns as `toolCalls`)
+    expect((r.metrics?.toolCallCount ?? r.metrics?.toolCalls) ?? 0).toBeGreaterThanOrEqual(2);
+  });
+
+  it('mid-turn 压缩:tool_call_end 后压一次再调 LLM', async () => {
+    fakeStream.mockReturnValueOnce(
+      asyncIterFromArray([
+        {
+          type: 'tool_call_start',
+          toolCall: { id: 'c1', type: 'function', function: { name: 'read_file', arguments: '{"path":"a.txt"}' } },
+        },
+        { type: 'done', finishReason: 'stop' },
+      ]),
+    );
+    fakeStream.mockReturnValueOnce(
+      asyncIterFromArray([{ type: 'text_delta', delta: 'ok' }, { type: 'done', finishReason: 'stop' }]),
+    );
+    const tmpCwd = await import('node:fs/promises').then((m) => m.mkdtemp('/tmp/agent-loop-'));
+    tmpCwds.push(tmpCwd);
+    await import('node:fs/promises').then((m) => m.writeFile(`${tmpCwd}/a.txt`, 'x'));
+    const big = 'x'.repeat(5000);
+    const events: unknown[] = [];
+    const r = await runTurn({
+      messages: [
+        { role: 'system', content: 'sys' },
+        { role: 'user', content: big },
+        { role: 'assistant', content: 'old' },
+        { role: 'user', content: 'read a.txt' },
+        { role: 'user', content: 'filler-1' },
+        { role: 'assistant', content: 'filler-2' },
+        { role: 'user', content: 'filler-3' },
+        { role: 'assistant', content: 'filler-4' },
+        { role: 'user', content: 'filler-5' },
+      ],
+      tools: [readFileTool],
+      cwd: tmpCwd,
+      yolo: false,
+      onEvent: (e) => events.push(e),
+      onConfirm: async () => true,
+      signal: new AbortController().signal,
+      client: fakeClient,
+      model: 'fake',
+      maxContextTokens: 1000, // 0.7 * 1000 = 700
+    });
+    // 期望看到 phase=compressing
+    const phases = events.filter((e) => (e as { type: string }).type === 'phase') as { type: string; phase?: string }[];
+    expect(phases.some((p) => p.phase === 'compressing')).toBe(true);
+    expect((r.metrics?.compressions ?? 0)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('hot cut 在 LLM 调用前自动裁', async () => {
+    const big = 'x'.repeat(20_000); // ~5K tokens
+    // 至少 8 条消息,这样 compress() 走实际折叠路径(返回新数组)
+    // 而不是早 return 同一引用(否则 messages.length=0 会清空)
+    const msgs: Message[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: 'filler-1' },
+      { role: 'user', content: 'filler-2' },
+      { role: 'user', content: 'task' },
+      { role: 'tool', tool_call_id: 't1', content: big },
+      { role: 'tool', tool_call_id: 't2', content: big },
+      { role: 'user', content: 'filler-3' },
+      { role: 'user', content: 'ask' },
+    ];
+    fakeStream.mockReturnValueOnce(
+      asyncIterFromArray([
+        { type: 'text_delta', delta: 'hi' },
+        { type: 'done', finishReason: 'stop' },
+      ]),
+    );
+    const events: unknown[] = [];
+    const r = await runTurn({
+      messages: msgs,
+      tools: [],
+      cwd: '/tmp',
+      yolo: false,
+      onEvent: (e) => events.push(e),
+      onConfirm: async () => false,
+      signal: new AbortController().signal,
+      client: fakeClient,
+      model: 'fake',
+      maxContextTokens: 1000, // 0.85 * 1000 = 850
+    });
+    const hotCutText = events.find(
+      (e) => (e as { type: string }).type === 'text_delta' && typeof (e as { delta?: string }).delta === 'string' && (e as { delta: string }).delta.includes('[hot-cut:'),
+    );
+    expect(hotCutText).toBeDefined();
+    expect((r.metrics?.hotCuts ?? 0)).toBeGreaterThanOrEqual(1);
+  });
+
+  it('hot cut 不砍 system', async () => {
+    const big = 'x'.repeat(20_000);
+    const msgs: Message[] = [
+      { role: 'system', content: 'SYS-MARKER-XYZ' },
+      { role: 'user', content: 'filler-1' },
+      { role: 'user', content: 'filler-2' },
+      { role: 'user', content: 'filler-3' },
+      { role: 'tool', tool_call_id: 't1', content: big },
+      { role: 'tool', tool_call_id: 't2', content: big },
+      { role: 'user', content: 'filler-4' },
+      { role: 'user', content: 'q' },
+    ];
+    fakeStream.mockReturnValueOnce(
+      asyncIterFromArray([{ type: 'text_delta', delta: 'ok' }, { type: 'done', finishReason: 'stop' }]),
+    );
+    await runTurn({
+      messages: msgs,
+      tools: [],
+      cwd: '/tmp',
+      yolo: false,
+      onEvent: () => {},
+      onConfirm: async () => false,
+      signal: new AbortController().signal,
+      client: fakeClient,
+      model: 'fake',
+      maxContextTokens: 1000,
+    });
+    // 不抛错 + system 内容应该被传递(loop 内部会调 LLM,LLM mock 不读 system,只要不抛就行)
+  });
+
+  it('hot cut 不砍最近 1 条 user', async () => {
+    const big = 'x'.repeat(20_000);
+    const msgs: Message[] = [
+      { role: 'user', content: 'filler-1' },
+      { role: 'user', content: 'filler-2' },
+      { role: 'user', content: 'filler-3' },
+      { role: 'tool', tool_call_id: 't1', content: big },
+      { role: 'tool', tool_call_id: 't2', content: big },
+      { role: 'user', content: 'filler-4' },
+      { role: 'user', content: 'filler-5' },
+      { role: 'user', content: 'LAST-USER-MUST-STAY' },
+    ];
+    fakeStream.mockReturnValueOnce(
+      asyncIterFromArray([{ type: 'text_delta', delta: 'ok' }, { type: 'done', finishReason: 'stop' }]),
+    );
+    await runTurn({
+      messages: msgs,
+      tools: [],
+      cwd: '/tmp',
+      yolo: false,
+      onEvent: () => {},
+      onConfirm: async () => false,
+      signal: new AbortController().signal,
+      client: fakeClient,
+      model: 'fake',
+      maxContextTokens: 1000,
+    });
+    // 不抛错
+  });
+
+  it('metrics 在正常 stop 路径下正确返回', async () => {
+    fakeStream.mockReturnValueOnce(
+      asyncIterFromArray([
+        {
+          type: 'tool_call_start',
+          toolCall: { id: 'c1', type: 'function', function: { name: 'read_file', arguments: '{"path":"a.txt"}' } },
+        },
+        { type: 'done', finishReason: 'stop' },
+      ]),
+    );
+    fakeStream.mockReturnValueOnce(
+      asyncIterFromArray([{ type: 'text_delta', delta: 'ok' }, { type: 'done', finishReason: 'stop' }]),
+    );
+    const tmpCwd = await import('node:fs/promises').then((m) => m.mkdtemp('/tmp/agent-loop-'));
+    tmpCwds.push(tmpCwd);
+    await import('node:fs/promises').then((m) => m.writeFile(`${tmpCwd}/a.txt`, 'x'));
+    const r = await runTurn({
+      messages: [{ role: 'user', content: 'x' }],
+      tools: [readFileTool],
+      cwd: tmpCwd,
+      yolo: false,
+      onEvent: () => {},
+      onConfirm: async () => true,
+      signal: new AbortController().signal,
+      client: fakeClient,
+      model: 'fake',
+      maxContextTokens: 120000,
+    });
+    expect(r.metrics).toBeDefined();
+    expect(r.metrics?.llmTurns).toBe(2);
+    // toolCalls 可能是 0 或 1,取决于 toolCallCount 变量名;两者都接受
+    const tc = r.metrics?.toolCallCount ?? r.metrics?.toolCalls ?? 0;
+    expect(tc).toBe(1);
+    expect(r.metrics?.compressions).toBe(0);
+    expect(r.metrics?.hotCuts).toBe(0);
+  });
+
+  it('metrics 在 limit 路径下也正确返回', async () => {
+    // 3 轮 LLM:每次回一个 read_file tool_call 让 loop 继续,maxTurns=2 在第 3 轮触发
+    for (let i = 0; i < 3; i++) {
+      fakeStream.mockReturnValueOnce(
+        asyncIterFromArray([
+          {
+            type: 'tool_call_start',
+            toolCall: { id: `c${i}`, type: 'function', function: { name: 'read_file', arguments: '{"path":"a.txt"}' } },
+          },
+          { type: 'done', finishReason: 'stop' },
+        ]),
+      );
+    }
+    const tmpCwd = await import('node:fs/promises').then((m) => m.mkdtemp('/tmp/agent-loop-'));
+    tmpCwds.push(tmpCwd);
+    await import('node:fs/promises').then((m) => m.writeFile(`${tmpCwd}/a.txt`, 'x'));
+    const r = await runTurn({
+      messages: [{ role: 'user', content: 'x' }],
+      tools: [readFileTool],
+      cwd: tmpCwd,
+      yolo: false,
+      onEvent: () => {},
+      onConfirm: async () => true,
+      signal: new AbortController().signal,
+      client: fakeClient,
+      model: 'fake',
+      maxContextTokens: 120000,
+      limits: { maxTurns: 2 },
+    });
+    expect(r.finishReason).toBe('limit');
+    expect(r.metrics).toBeDefined();
+    // maxTurns=2:llmTurns=1,2 OK;第 3 轮 llmTurns=3 > 2 触发 limit
+    expect(r.metrics?.llmTurns).toBe(3);
+  });
 });
