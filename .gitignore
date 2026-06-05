@@ -10,3 +10,5 @@ coverage/
 # 临时测试产物(由 dev/手动创建)
 analysis.md
 hello-world.md
+# Git worktree 目录(子代理隔离)
+.worktrees/
