@@ -2,11 +2,13 @@
 import React from 'react';
 import { render } from 'ink';
 import { App } from './app.js';
+import { loadConfig } from './config.js';
 
 interface Args {
   yolo: boolean;
   allowMutations: boolean;
   cwd: string;
+  provider?: string;
   headlessPrompt?: string;
 }
 
@@ -22,6 +24,7 @@ function parseArgs(argv: string[]): Args {
     if (a === '--yolo') args.yolo = true;
     else if (a === '--allow-mutations') args.allowMutations = true;
     else if (a === '--cwd') args.cwd = argv[++i] ?? args.cwd;
+    else if (a === '--provider') args.provider = argv[++i];
     else if (!a.startsWith('--')) positional.push(a);
   }
   if (positional.length > 0) args.headlessPrompt = positional.join(' ');
@@ -38,5 +41,23 @@ import('node:fs').then(async ({ existsSync, readFileSync }) => {
       if (m && !process.env[m[1]]) process.env[m[1]] = m[2];
     }
   }
-  render(<App yolo={args.yolo} allowMutations={args.allowMutations} cwd={args.cwd} headlessPrompt={args.headlessPrompt} />);
+
+  const config = (() => {
+    try {
+      return loadConfig({ provider: args.provider });
+    } catch (e) {
+      process.stderr.write(`${(e as Error).message}\n`);
+      process.exit(2);
+    }
+  })();
+
+  render(
+    <App
+      yolo={args.yolo}
+      allowMutations={args.allowMutations}
+      cwd={args.cwd}
+      headlessPrompt={args.headlessPrompt}
+      config={config}
+    />,
+  );
 });

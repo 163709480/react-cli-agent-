@@ -21,7 +21,10 @@ describe('grep', () => {
       { pattern: 'hello', max_results: 10 },
       { cwd, abort: new AbortController().signal, confirmedByUser: true },
     );
-    expect(r.matches.length).toBeGreaterThanOrEqual(2);
+    expect(r.matches).toEqual([
+      { file: 'a.txt', line: 1, text: 'hello world' },
+      { file: 'a.txt', line: 3, text: 'hello again' },
+    ]);
   });
 
   it('glob 过滤', async () => {

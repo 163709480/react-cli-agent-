@@ -14,6 +14,52 @@ const schema = z.object({
   max_results: z.number().int().positive().default(100),
 });
 
+function displayPath(file: string, cwd: string): string {
+  return path.isAbsolute(file) ? path.relative(cwd, file) : file;
+}
+
+function parseMatchLine(
+  line: string,
+  currentFile: string,
+  cwd: string,
+): { file: string; line: number; text: string } | null {
+  const withFile = line.match(/^(.+?):(\d+):(.*)$/);
+  if (withFile) {
+    return {
+      file: displayPath(withFile[1], cwd),
+      line: parseInt(withFile[2], 10),
+      text: withFile[3],
+    };
+  }
+
+  const lineOnly = line.match(/^(\d+):(.*)$/);
+  if (lineOnly) {
+    return {
+      file: displayPath(currentFile, cwd),
+      line: parseInt(lineOnly[1], 10),
+      text: lineOnly[2],
+    };
+  }
+
+  return null;
+}
+
+function collectMatches(
+  stdout: string,
+  currentFile: string,
+  cwd: string,
+  matches: Array<{ file: string; line: number; text: string }>,
+  maxResults: number,
+): void {
+  for (const line of stdout.split('\n').filter(Boolean)) {
+    const parsed = parseMatchLine(line, currentFile, cwd);
+    if (parsed) {
+      matches.push(parsed);
+      if (matches.length >= maxResults) break;
+    }
+  }
+}
+
 async function execute(input: z.infer<typeof schema>, ctx: ToolCtx) {
   // 先用 glob 把范围收敛到 cwd 内
   const fg = await import('fast-glob');
@@ -38,13 +84,7 @@ async function execute(input: z.infer<typeof schema>, ctx: ToolCtx) {
         '-n', '--no-heading', '--color=never',
         input.pattern, file,
       ], { cwd: ctx.cwd, signal: ctx.abort });
-      for (const line of stdout.split('\n').filter(Boolean)) {
-        const m = line.match(/^(.+?):(\d+):(.*)$/);
-        if (m) {
-          matches.push({ file: m[1], line: parseInt(m[2], 10), text: m[3] });
-          if (matches.length >= input.max_results) break;
-        }
-      }
+      collectMatches(stdout, file, ctx.cwd, matches, input.max_results);
     } catch (e) {
       const err = e as { code?: string; stderr?: string };
       if (err.code === 'ENOENT') {
@@ -53,13 +93,7 @@ async function execute(input: z.infer<typeof schema>, ctx: ToolCtx) {
           const { stdout } = await exec('grep', ['-rn', '--color=never', input.pattern, file], {
             cwd: ctx.cwd, signal: ctx.abort,
           });
-          for (const line of stdout.split('\n').filter(Boolean)) {
-            const m = line.match(/^(.+?):(\d+):(.*)$/);
-            if (m) {
-              matches.push({ file: m[1], line: parseInt(m[2], 10), text: m[3] });
-              if (matches.length >= input.max_results) break;
-            }
-          }
+          collectMatches(stdout, file, ctx.cwd, matches, input.max_results);
         } catch (ge) {
           if ((ge as { code?: number }).code !== 1) {
             throw new ToolError('grep', `grep failed: ${(ge as Error).message}`);

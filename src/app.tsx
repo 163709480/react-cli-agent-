@@ -11,7 +11,7 @@ import { grepTool } from './tools/grep.js';
 import { globTool } from './tools/glob.js';
 import { httpFetchTool } from './tools/http_fetch.js';
 import { createOpenAIClient } from './llm/client.js';
-import { loadConfig } from './config.js';
+import { loadConfig, type Config } from './config.js';
 import type OpenAI from 'openai';
 import type { AgentEvent, Message, ToolDef, ToolCall } from './agent/types.js';
 import { v4 as uuid } from 'uuid';
@@ -21,25 +21,26 @@ interface AppProps {
   allowMutations: boolean;
   cwd: string;
   headlessPrompt?: string;
+  config?: Config;
 }
 
 const TOOLS: ToolDef[] = [
   readFileTool, writeFileTool, editFileTool, grepTool, globTool, httpFetchTool,
 ];
 
-export function App({ yolo, allowMutations, cwd, headlessPrompt }: AppProps) {
+export function App({ yolo, allowMutations, cwd, headlessPrompt, config: providedConfig }: AppProps) {
   const { exit } = useApp();
   const [messages, setMessages] = useState<Message[]>([]);
   const [display, setDisplay] = useState<DisplayMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const clientRef = useRef<OpenAI | null>(null);
-  const configRef = useRef<ReturnType<typeof loadConfig> | null>(null);
+  const configRef = useRef<Config | null>(null);
   const abortRef = useRef<AbortController | null>(null);
   const confirmResolversRef = useRef<Map<string, (ok: boolean) => void>>(new Map());
   const [pending, setPending] = useState<DisplayMessage | null>(null);
 
   useEffect(() => {
-    const cfg = loadConfig();
+    const cfg = providedConfig ?? loadConfig();
     configRef.current = cfg;
     try {
       clientRef.current = createOpenAIClient(cfg);
@@ -92,11 +93,6 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt }: AppProps) {
         onEvent: (ev) => applyEvent(ev, assistantId),
         onConfirm: (tc) =>
           new Promise<boolean>((resolve) => {
-            if (yolo) {
-              // yolo 模式:跳过 confirm,但 dangerous 也跳过(用户已知风险)
-              resolve(true);
-              return;
-            }
             const id = uuid();
             confirmResolversRef.current.set(id, resolve);
             setPending({

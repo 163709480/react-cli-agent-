@@ -1,6 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
+import { resolveProvider } from './llm/providers.js';
 
 export interface Config {
   openaiApiKey: string;
@@ -10,8 +11,7 @@ export interface Config {
   writeableExts: string[];
 }
 
-const DEFAULT_BASE_URL = 'https://api.deepseek.com/v1';
-const DEFAULT_MODEL = 'deepseek-chat';
+const DEFAULT_PROVIDER = 'deepseek';
 const DEFAULT_MAX_CONTEXT = 120000;
 const DEFAULT_EXTS = ['.md', '.ts', '.tsx', '.js', '.jsx', '.json', '.yaml', '.yml', '.toml', '.txt'];
 
@@ -24,12 +24,27 @@ function loadJsonConfig(): Partial<Config> {
   }
 }
 
-export function loadConfig(): Config {
+export interface LoadConfigOptions {
+  provider?: string;
+}
+
+export function loadConfig(opts: LoadConfigOptions = {}): Config {
   const file = loadJsonConfig();
+  const provider = opts.provider ? resolveProvider(opts.provider) : undefined;
+  const fallbackProvider = resolveProvider(DEFAULT_PROVIDER);
+
   return {
     openaiApiKey: process.env.OPENAI_API_KEY ?? '',
-    openaiBaseUrl: process.env.OPENAI_BASE_URL ?? file.openaiBaseUrl ?? DEFAULT_BASE_URL,
-    openaiModel: process.env.OPENAI_MODEL ?? file.openaiModel ?? DEFAULT_MODEL,
+    openaiBaseUrl:
+      provider?.baseUrl ??
+      process.env.OPENAI_BASE_URL ??
+      file.openaiBaseUrl ??
+      fallbackProvider.baseUrl,
+    openaiModel:
+      provider?.defaultModel ??
+      process.env.OPENAI_MODEL ??
+      file.openaiModel ??
+      fallbackProvider.defaultModel,
     maxContextTokens: parseInt(
       process.env.AGENT_MAX_CONTEXT_TOKENS ?? String(file.maxContextTokens ?? DEFAULT_MAX_CONTEXT),
       10,

@@ -1,0 +1,66 @@
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import fs from 'node:fs/promises';
+import os from 'node:os';
+import path from 'node:path';
+import { loadConfig } from '../config.js';
+
+describe('loadConfig', () => {
+  const savedEnv: Record<string, string | undefined> = {};
+  const envKeys = [
+    'OPENAI_API_KEY',
+    'OPENAI_BASE_URL',
+    'OPENAI_MODEL',
+    'AGENT_MAX_CONTEXT_TOKENS',
+  ];
+  let home: string;
+
+  beforeEach(async () => {
+    for (const k of envKeys) {
+      savedEnv[k] = process.env[k];
+      delete process.env[k];
+    }
+    home = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-config-home-'));
+    vi.spyOn(os, 'homedir').mockReturnValue(home);
+  });
+
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    await fs.rm(home, { recursive: true, force: true });
+    for (const k of envKeys) {
+      if (savedEnv[k] === undefined) delete process.env[k];
+      else process.env[k] = savedEnv[k];
+    }
+  });
+
+  it('不传 provider 时,行为保持 env 优先', () => {
+    process.env.OPENAI_BASE_URL = 'https://example.com/v1';
+    process.env.OPENAI_MODEL = 'some-model';
+    const cfg = loadConfig();
+    expect(cfg.openaiBaseUrl).toBe('https://example.com/v1');
+    expect(cfg.openaiModel).toBe('some-model');
+  });
+
+  it('不传 provider 且无 env 时,使用 deepseek 默认值', () => {
+    const cfg = loadConfig();
+    expect(cfg.openaiBaseUrl).toBe('https://api.deepseek.com/v1');
+    expect(cfg.openaiModel).toBe('deepseek-chat');
+  });
+
+  it('传 provider 时,覆盖 env 中的 baseUrl 和 model', () => {
+    process.env.OPENAI_BASE_URL = 'https://example.com/v1';
+    process.env.OPENAI_MODEL = 'some-model';
+    const cfg = loadConfig({ provider: 'deepseek' });
+    expect(cfg.openaiBaseUrl).toBe('https://api.deepseek.com/v1');
+    expect(cfg.openaiModel).toBe('deepseek-chat');
+  });
+
+  it('传未知 provider 时抛错', () => {
+    expect(() => loadConfig({ provider: 'ollama' })).toThrow(/Unknown --provider/);
+  });
+
+  it('传 provider 时,API key 仍从 env 读取', () => {
+    process.env.OPENAI_API_KEY = 'sk-test-123';
+    const cfg = loadConfig({ provider: 'deepseek' });
+    expect(cfg.openaiApiKey).toBe('sk-test-123');
+  });
+});

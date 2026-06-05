@@ -251,4 +251,51 @@ describe('runTurn', () => {
     const toolMsg = r.messages.find((m) => m.role === 'tool');
     expect(toolMsg?.content).toBe('wrote');
   });
+
+  it('--yolo 不跳过 dangerous 类工具的确认', async () => {
+    const { z } = await import('zod');
+    const execute = vi.fn(async () => 'fetched');
+    const stub: ToolDef = {
+      name: 'danger_fetch',
+      description: 'test dangerous',
+      safety: 'dangerous',
+      schema: z.object({}),
+      execute,
+    };
+    const onConfirm = vi.fn(async () => false);
+    fakeStream.mockReturnValueOnce(
+      asyncIterFromArray([
+        {
+          type: 'tool_call_start',
+          toolCall: {
+            id: 'call_1',
+            type: 'function',
+            function: { name: 'danger_fetch', arguments: '{}' },
+          },
+        },
+        { type: 'done', finishReason: 'stop' },
+      ]),
+    );
+    fakeStream.mockReturnValueOnce(
+      asyncIterFromArray([
+        { type: 'done', finishReason: 'stop' },
+      ]),
+    );
+    const r = await runTurn({
+      messages: [{ role: 'user', content: 'x' }],
+      tools: [stub],
+      cwd: '/tmp',
+      yolo: true,
+      onEvent: () => {},
+      onConfirm,
+      signal: new AbortController().signal,
+      client: fakeClient,
+      model: 'fake',
+      maxContextTokens: 120000,
+    });
+    expect(onConfirm).toHaveBeenCalledTimes(1);
+    expect(execute).not.toHaveBeenCalled();
+    const toolMsg = r.messages.find((m) => m.role === 'tool');
+    expect(toolMsg?.content).toMatch(/declined/i);
+  });
 });

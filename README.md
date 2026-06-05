@@ -20,6 +20,13 @@ npm run dev -- "修复 foo.ts 里的拼写错误"
 
 # 跳过所有确认(脚本场景)
 npm run dev -- --yolo "重命名所有 *.js 为 *.ts"
+
+# 显式选择 provider(覆盖 env / json config)
+# 当前仅支持 deepseek(也是默认值)
+npm run dev -- --provider deepseek "列出 src 下的 TypeScript 文件"
+
+# 未知 provider 会立即报错并 exit 2
+npm run dev -- --provider ollama
 ```
 
 ## 工具

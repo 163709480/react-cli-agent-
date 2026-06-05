@@ -1,6 +1,7 @@
 import { chatCompletionStream } from '../llm/stream.js';
 import { findTool, getToolDescriptors } from './tools.js';
 import { shouldCompress, compress } from './context.js';
+import { fallbackSummary, loadCompactInstructions, summarizeConversation } from './summarizer.js';
 import { SandboxError, ToolError } from '../safety/errors.js';
 import type {
   Message,
@@ -55,7 +56,23 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
 
   if (shouldCompress(messages, maxContextTokens)) {
     onEvent({ type: 'text_delta', delta: '[context compressed]\n' });
-    const compressed = await compress(messages, async (text) => text.slice(0, 200) + '...');
+    const compactInstructions = await loadCompactInstructions(cwd);
+    const compressed = await compress(messages, async (text) => {
+      try {
+        return await summarizeConversation({
+          client,
+          model,
+          text,
+          signal,
+          compactInstructions,
+          focus: 'Automatic context compaction before continuing the current user task.',
+        });
+      } catch (e) {
+        if (signal.aborted) throw e;
+        onEvent({ type: 'text_delta', delta: '[context compression fallback]\n' });
+        return fallbackSummary(text);
+      }
+    });
     messages.length = 0;
     messages.push(...compressed);
   }
