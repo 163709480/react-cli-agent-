@@ -34,4 +34,13 @@ describe('glob', () => {
     );
     expect(r.files).toEqual([]);
   });
+
+  it('绝对路径模式直接报错', async () => {
+    await expect(
+      globTool.execute(
+        { pattern: path.join(cwd, 'src/*.ts') },
+        { cwd, abort: new AbortController().signal, confirmedByUser: true },
+      ),
+    ).rejects.toThrow(/pattern must be relative to cwd/);
+  });
 });

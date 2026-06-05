@@ -1,4 +1,5 @@
 import type { ZodType, ZodTypeDef } from 'zod';
+import type { AuditSink } from '../audit/sink.js';
 
 /** LLM API 返回的原始消息角色 */
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
@@ -64,7 +65,10 @@ export type AgentEvent =
   | { type: 'tool_call_start'; toolCall: ToolCall }
   | { type: 'tool_call_end'; toolCallId: string; result: string; error?: string }
   | { type: 'done'; finishReason: 'stop' | 'length' | 'abort' | 'error'; usage?: { promptTokens: number; completionTokens: number } }
-  | { type: 'error'; error: string };
+  | { type: 'error'; error: string }
+  | { type: 'phase'; phase: 'thinking' | 'executing' | 'idle'; toolName?: string }
+  | { type: 'user_confirm'; toolCallId: string; toolName: string; approved: boolean; latencyMs: number }
+  | { type: 'llm_usage'; callIndex: number; promptTokens: number; completionTokens: number; finishReason: string };
 
 /** Loop 输入 */
 export interface RunTurnInput {
@@ -81,6 +85,10 @@ export interface RunTurnInput {
   maxContextTokens: number;
   /** 透传给 ToolCtx 的额外字段,如 writeableExts / allowMutations */
   extraCtx?: Record<string, unknown>;
+  /** 可选审计 sink;若提供,loop 会把每条事件转发一份给 sink(配合合规审计) */
+  auditSink?: AuditSink;
+  /** 可选 LLM token 用量回调(每轮 LLM 调用结束时触发,供审计 sink 落 llm_usage 事件) */
+  onUsage?: (u: { promptTokens: number; completionTokens: number; finishReason: string }) => void;
 }
 
 /** Loop 输出 */

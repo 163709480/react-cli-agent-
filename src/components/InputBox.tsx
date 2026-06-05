@@ -5,7 +5,7 @@ import TextInput from 'ink-text-input';
 export function InputBox({ onSubmit, disabled }: { onSubmit: (v: string) => void; disabled: boolean }) {
   const [value, setValue] = useState('');
   if (disabled) {
-    return <Text dimColor>  (agent 工作中,按 Ctrl+C 中断)</Text>;
+    return <Text dimColor>  esc to interrupt</Text>;
   }
   return (
     <Box>

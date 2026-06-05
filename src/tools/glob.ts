@@ -1,17 +1,20 @@
 import { z } from 'zod';
 import fg from 'fast-glob';
 import path from 'node:path';
-import { resolveWithinCwd } from '../safety/sandbox.js';
 import type { ToolDef, ToolCtx } from '../agent/types.js';
 
 const schema = z.object({
-  pattern: z.string().describe('glob 模式,如 "src/**/*.ts"'),
+  pattern: z.string().describe(
+    'glob 模式,相对 cwd,如 "src/**/*.ts"。不要传绝对路径。',
+  ),
 });
 
 async function execute(input: z.infer<typeof schema>, ctx: ToolCtx) {
-  // 模式 base 必须能 resolve 到 cwd 内
-  const base = path.dirname(input.pattern).split('*')[0] || '.';
-  resolveWithinCwd(base, ctx.cwd);
+  if (path.isAbsolute(input.pattern)) {
+    throw new Error(
+      `glob: pattern must be relative to cwd, got absolute path "${input.pattern}"`,
+    );
+  }
   const files = await fg(input.pattern, {
     cwd: ctx.cwd,
     dot: false,

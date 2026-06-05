@@ -7,8 +7,10 @@ import type {
   Message,
   RunTurnInput,
   RunTurnResult,
+  AgentEvent,
 } from './types.js';
 import type { ChatCompletionTool } from 'openai/resources/chat/completions.js';
+import { agentEventToAuditFields } from '../audit/sink.js';
 
 function stringifyResult(v: unknown): string {
   if (typeof v === 'string') return v;
@@ -49,13 +51,22 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
   const {
     messages: initialMessages, tools, cwd, yolo,
     onEvent, onConfirm, signal, client, model, maxContextTokens, extraCtx,
+    auditSink, onUsage,
   } = input;
+
+  // 包装 onEvent:既通知 UI,也转一份给 auditSink(若提供)。
+  // 4 处调用都改 emit(),单点维护。
+  let usageCallIndex = 0;
+  const emit = (ev: AgentEvent): void => {
+    onEvent(ev);
+    if (auditSink) auditSink.emit(agentEventToAuditFields(ev));
+  };
 
   const messages: Message[] = [...initialMessages];
   const descriptors: ChatCompletionTool[] = getToolDescriptors(tools) as unknown as ChatCompletionTool[];
 
   if (shouldCompress(messages, maxContextTokens)) {
-    onEvent({ type: 'text_delta', delta: '[context compressed]\n' });
+    emit({ type: 'text_delta', delta: '[context compressed]\n' });
     const compactInstructions = await loadCompactInstructions(cwd);
     const compressed = await compress(messages, async (text) => {
       try {
@@ -69,7 +80,7 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
         });
       } catch (e) {
         if (signal.aborted) throw e;
-        onEvent({ type: 'text_delta', delta: '[context compression fallback]\n' });
+        emit({ type: 'text_delta', delta: '[context compression fallback]\n' });
         return fallbackSummary(text);
       }
     });
@@ -87,28 +98,52 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
       let textBuf = '';
       const toolCalls: NonNullable<Message['tool_calls']> = [];
       let sawFinish = false;
+      let roundFinishReason: 'stop' | 'length' = 'stop';
 
       await withRetry(async () => {
         textBuf = '';
         toolCalls.length = 0;
         sawFinish = false;
+        roundFinishReason = 'stop';
+        emit({ type: 'phase', phase: 'thinking' });
         const gen = chatCompletionStream({ client, model, messages, tools: descriptors, signal });
         for await (const ev of gen) {
           if (ev.type === 'text_delta') {
             textBuf += ev.delta;
-            onEvent(ev);
+            emit(ev);
           } else if (ev.type === 'tool_call_start') {
             toolCalls.push(ev.toolCall);
-            onEvent(ev);
+            emit({ type: 'phase', phase: 'executing', toolName: ev.toolCall.function.name });
+            emit(ev);
           } else if (ev.type === 'done') {
             sawFinish = true;
-            finishReason = ev.finishReason === 'length' ? 'length' : 'stop';
+            roundFinishReason = ev.finishReason === 'length' ? 'length' : 'stop';
+            // 透传 usage 给审计(以及任何 onUsage 订阅方)
+            if (onUsage) {
+              onUsage({
+                promptTokens: ev.usage?.promptTokens ?? 0,
+                completionTokens: ev.usage?.completionTokens ?? 0,
+                finishReason: roundFinishReason,
+              });
+            }
+            if (auditSink) {
+              usageCallIndex++;
+              auditSink.emit({
+                type: 'llm_usage',
+                callIndex: usageCallIndex,
+                promptTokens: ev.usage?.promptTokens ?? 0,
+                completionTokens: ev.usage?.completionTokens ?? 0,
+                finishReason: roundFinishReason,
+              });
+            }
           } else if (ev.type === 'error') {
             throw new Error(ev.error);
           }
         }
-        if (!sawFinish) finishReason = 'stop';
+        if (!sawFinish) roundFinishReason = 'stop';
       }, signal);
+
+      finishReason = roundFinishReason;
 
       const assistantMsg: Message = {
         role: 'assistant',
@@ -131,7 +166,15 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
           const effectiveSafety = yolo && tool.safety !== 'dangerous' ? 'safe' : tool.safety;
           let confirmed = true;
           if (effectiveSafety === 'confirm' || effectiveSafety === 'dangerous') {
+            const t0 = Date.now();
             confirmed = await onConfirm(tc, tool);
+            emit({
+              type: 'user_confirm',
+              toolCallId: tc.id,
+              toolName: tc.function.name,
+              approved: confirmed,
+              latencyMs: Date.now() - t0,
+            });
           }
           if (!confirmed) {
             resultStr = 'User declined this action. Please try a different approach.';
@@ -156,17 +199,18 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
           }
         }
         messages.push({ role: 'tool', tool_call_id: tc.id, content: resultStr });
-        onEvent({ type: 'tool_call_end', toolCallId: tc.id, result: resultStr });
+        emit({ type: 'tool_call_end', toolCallId: tc.id, result: resultStr });
       }
     }
   } catch (e) {
     if (signal.aborted) finishReason = 'abort';
     else {
       finishReason = 'error';
-      onEvent({ type: 'error', error: (e as Error).message });
+      emit({ type: 'error', error: (e as Error).message });
     }
   }
 
-  onEvent({ type: 'done', finishReason });
+  emit({ type: 'phase', phase: 'idle' });
+  emit({ type: 'done', finishReason });
   return { messages, finishReason };
 }

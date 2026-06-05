@@ -5,3 +5,7 @@ dist/
 coverage/
 *.log
 .npm-cache/
+.DS_Store
+# 临时测试产物(由 dev/手动创建)
+analysis.md
+hello-world.md

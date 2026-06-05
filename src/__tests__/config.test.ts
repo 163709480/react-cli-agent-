@@ -44,6 +44,18 @@ describe('loadConfig', () => {
     const cfg = loadConfig();
     expect(cfg.openaiBaseUrl).toBe('https://api.deepseek.com/v1');
     expect(cfg.openaiModel).toBe('deepseek-chat');
+    expect(cfg.providerName).toBe('deepseek');
+  });
+
+  it('不传 provider 但 env 自定义 baseUrl 时,providerName 标 default', () => {
+    process.env.OPENAI_BASE_URL = 'https://example.com/v1';
+    const cfg = loadConfig();
+    expect(cfg.providerName).toBe('default');
+  });
+
+  it('显式传 --provider 时,providerName 用传进来的名字', () => {
+    const cfg = loadConfig({ provider: 'deepseek' });
+    expect(cfg.providerName).toBe('deepseek');
   });
 
   it('传 provider 时,覆盖 env 中的 baseUrl 和 model', () => {

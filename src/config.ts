@@ -9,6 +9,7 @@ export interface Config {
   openaiModel: string;
   maxContextTokens: number;
   writeableExts: string[];
+  providerName: string;
 }
 
 const DEFAULT_PROVIDER = 'deepseek';
@@ -33,22 +34,37 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
   const provider = opts.provider ? resolveProvider(opts.provider) : undefined;
   const fallbackProvider = resolveProvider(DEFAULT_PROVIDER);
 
+  // provider 名字:显式 --provider 优先,否则看实际 baseUrl 是不是某个 preset 的,
+  // 都不是就标 'default'(说明用了自定义 baseUrl)。
+  const baseUrl =
+    provider?.baseUrl ??
+    process.env.OPENAI_BASE_URL ??
+    file.openaiBaseUrl ??
+    fallbackProvider.baseUrl;
+  const model =
+    provider?.defaultModel ??
+    process.env.OPENAI_MODEL ??
+    file.openaiModel ??
+    fallbackProvider.defaultModel;
+
+  let providerName: string;
+  if (opts.provider) {
+    providerName = opts.provider;
+  } else if (baseUrl === fallbackProvider.baseUrl) {
+    providerName = DEFAULT_PROVIDER;
+  } else {
+    providerName = 'default';
+  }
+
   return {
     openaiApiKey: process.env.OPENAI_API_KEY ?? '',
-    openaiBaseUrl:
-      provider?.baseUrl ??
-      process.env.OPENAI_BASE_URL ??
-      file.openaiBaseUrl ??
-      fallbackProvider.baseUrl,
-    openaiModel:
-      provider?.defaultModel ??
-      process.env.OPENAI_MODEL ??
-      file.openaiModel ??
-      fallbackProvider.defaultModel,
+    openaiBaseUrl: baseUrl,
+    openaiModel: model,
     maxContextTokens: parseInt(
       process.env.AGENT_MAX_CONTEXT_TOKENS ?? String(file.maxContextTokens ?? DEFAULT_MAX_CONTEXT),
       10,
     ),
     writeableExts: file.writeableExts ?? DEFAULT_EXTS,
+    providerName,
   };
 }
