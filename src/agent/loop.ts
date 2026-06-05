@@ -74,27 +74,35 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
   const descriptors: ChatCompletionTool[] = getToolDescriptors(tools) as unknown as ChatCompletionTool[];
 
   if (shouldCompress(messages, maxContextTokens)) {
-    compressions++;
-    emit({ type: 'text_delta', delta: '[context compressed]\n' });
+    emit({ type: 'phase', phase: 'compressing' });
+    const before = estimateTokens(messages);
     const compactInstructions = await loadCompactInstructions(cwd);
-    const compressed = await compress(messages, async (text) => {
-      try {
-        return await summarizeConversation({
-          client,
-          model,
-          text,
-          signal,
-          compactInstructions,
-          focus: 'Automatic context compaction before continuing the current user task.',
-        });
-      } catch (e) {
-        if (signal.aborted) throw e;
-        emit({ type: 'text_delta', delta: '[context compression fallback]\n' });
-        return fallbackSummary(text);
-      }
-    });
-    messages.length = 0;
-    messages.push(...compressed);
+    try {
+      const compressed = await compress(messages, async (text) => {
+        try {
+          return await summarizeConversation({
+            client,
+            model,
+            text,
+            signal,
+            compactInstructions,
+            focus: 'Automatic context compaction before continuing the current user task.',
+          });
+        } catch (e) {
+          if (signal.aborted) throw e;
+          emit({ type: 'text_delta', delta: '[context compression fallback]\n' });
+          return fallbackSummary(text);
+        }
+      });
+      messages.length = 0;
+      messages.push(...compressed);
+      const after = estimateTokens(messages);
+      compressions++;
+      emit({ type: 'text_delta', delta: `[context compressed: ${before} → ${after} tokens]\n` });
+    } catch (e) {
+      emit({ type: 'text_delta', delta: `[context compression failed: ${(e as Error).message}]\n` });
+    }
+    emit({ type: 'phase', phase: 'thinking' });
   }
 
   let finishReason: 'stop' | 'length' | 'abort' | 'error' | 'limit' = 'stop';
@@ -242,6 +250,38 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
         }
         messages.push({ role: 'tool', tool_call_id: tc.id, content: resultStr });
         emit({ type: 'tool_call_end', toolCallId: tc.id, result: resultStr });
+        // L1: mid-turn 增量压缩
+        if (shouldCompress(messages, maxContextTokens)) {
+          emit({ type: 'phase', phase: 'compressing' });
+          const before = estimateTokens(messages);
+          const compactInstructions = await loadCompactInstructions(cwd);
+          try {
+            const compressed = await compress(messages, async (text) => {
+              try {
+                return await summarizeConversation({
+                  client,
+                  model,
+                  text,
+                  signal,
+                  compactInstructions,
+                  focus: 'Automatic context compaction before continuing the current user task.',
+                });
+              } catch (e) {
+                if (signal.aborted) throw e;
+                emit({ type: 'text_delta', delta: '[context compression fallback]\n' });
+                return fallbackSummary(text);
+              }
+            });
+            messages.length = 0;
+            messages.push(...compressed);
+            const after = estimateTokens(messages);
+            compressions++;
+            emit({ type: 'text_delta', delta: `[context compressed: ${before} → ${after} tokens]\n` });
+          } catch (e) {
+            emit({ type: 'text_delta', delta: `[context compression failed: ${(e as Error).message}]\n` });
+          }
+          emit({ type: 'phase', phase: 'executing' });
+        }
       }
     }
   } catch (e) {
