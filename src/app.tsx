@@ -5,6 +5,8 @@ import os from 'node:os';
 import { MessageList, type DisplayMessage } from './components/MessageList.js';
 import { InputBox } from './components/InputBox.js';
 import { ActiveToolLine, type ActiveToolState } from './components/ActiveToolLine.js';
+import { DangerousConfirmBox, type ConfirmSeverity } from './components/DangerousConfirmBox.js';
+import { buildPreview } from './components/buildPreview.js';
 import { HeadStatus, type LoopPhase } from './components/HeadStatus.js';
 import { Welcome } from './components/Welcome.js';
 import { runTurn } from './agent/loop.js';
@@ -14,6 +16,7 @@ import { editFileTool } from './tools/edit_file.js';
 import { grepTool } from './tools/grep.js';
 import { globTool } from './tools/glob.js';
 import { httpFetchTool } from './tools/http_fetch.js';
+import { deleteFileTool } from './tools/delete_file.js';
 import { createOpenAIClient } from './llm/client.js';
 import { loadConfig, type Config } from './config.js';
 import { JsonlFileSink, type AuditSink } from './audit/sink.js';
@@ -28,6 +31,12 @@ interface ActiveTool {
   name: string;
   args: string;
   state: ActiveToolState;
+  /** safety 等级(从 ToolDef.safety 透传);safe 工具不弹 DangerousConfirmBox */
+  safety?: 'safe' | 'confirm' | 'dangerous';
+  /** 解析后的参数(给 DangerousConfirmBox 展示) */
+  parsed?: Record<string, unknown>;
+  /** 变更预览内容(由 buildPreview 生成) */
+  preview?: string;
 }
 
 interface AppProps {
@@ -41,7 +50,7 @@ interface AppProps {
 }
 
 const TOOLS: ToolDef[] = [
-  readFileTool, writeFileTool, editFileTool, grepTool, globTool, httpFetchTool,
+  readFileTool, writeFileTool, editFileTool, grepTool, globTool, httpFetchTool, deleteFileTool,
 ];
 
 export function App({ yolo, allowMutations, cwd, headlessPrompt, config: providedConfig, auditMode, auditPath }: AppProps) {
@@ -159,15 +168,32 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
         cwd,
         yolo,
         onEvent: (ev) => applyEvent(ev, assistantId),
-        onConfirm: (tc) =>
+        onConfirm: (tc, tool) =>
           new Promise<boolean>((resolve) => {
             pendingResolveRef.current = resolve;
+            // 解析参数(失败用空对象,让 DangerousConfirmBox 仍能显示原文)
+            let parsed: Record<string, unknown> | undefined;
+            try { parsed = JSON.parse(tc.function.arguments); } catch { parsed = undefined; }
+            // 生成 preview(异步)— 但 useState 同步,先把基础信息 set 进去,
+            // preview 在异步完成后再 setState 覆盖
             setActiveTool({
               id: uuid(),
               name: tc.function.name,
               args: tc.function.arguments,
               state: 'pending',
+              safety: tool.safety,
+              parsed,
             });
+            // 对 confirm / dangerous 工具生成变更预览
+            if (tool.safety !== 'safe') {
+              void buildPreview(tc.function.name, parsed ?? {}, cwd).then((p) => {
+                setActiveTool((cur) =>
+                  cur && cur.name === tc.function.name && cur.state === 'pending'
+                    ? { ...cur, preview: p.preview, parsed: p.parsed ?? parsed }
+                    : cur,
+                );
+              });
+            }
           }),
         signal: abort.signal,
         client: clientRef.current,
@@ -257,8 +283,8 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
     }
   }
 
-  // 工具子项(⎿ file.md 风格)
-  const toolChildren = activeTool && activeTool.state !== 'error' ? (
+  // 工具子项(⎿ file.md 风格)— 仅对非 error 状态、非待确认状态展示
+  const toolChildren = activeTool && activeTool.state === 'running' ? (
     <Text dimColor>  ⎿  {activeTool.args.length > 60 ? activeTool.args.slice(0, 60) + '…' : activeTool.args}</Text>
   ) : null;
 
@@ -282,7 +308,7 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
           toolName={phaseToolName}
         />
       )}
-      {activeTool && (
+      {activeTool && activeTool.state !== 'pending' && (
         <ActiveToolLine
           name={activeTool.name}
           args={activeTool.args}
@@ -290,6 +316,22 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
         >
           {toolChildren}
         </ActiveToolLine>
+      )}
+      {activeTool && activeTool.state === 'pending' && activeTool.safety && activeTool.safety !== 'safe' && (
+        <DangerousConfirmBox
+          name={activeTool.name}
+          args={activeTool.args}
+          severity={activeTool.safety as ConfirmSeverity}
+          parsed={activeTool.parsed}
+          preview={activeTool.preview}
+        />
+      )}
+      {activeTool && activeTool.state === 'pending' && activeTool.safety === 'safe' && (
+        <ActiveToolLine
+          name={activeTool.name}
+          args={activeTool.args}
+          state="pending"
+        />
       )}
       <Box marginTop={1}>
         <InputBox onSubmit={handleUserInput} disabled={busy} />

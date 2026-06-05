@@ -145,8 +145,30 @@ jq -c 'select(.type=="session_start") | {ts, sessionId, model, provider}' ~/.age
 
 ## 工具
 
-- read_file / write_file / edit_file / grep / glob / http_fetch
-- 路径必须在 cwd 内,后缀必须在白名单
+| 工具 | safety | 功能 | 备注 |
+|---|---|---|---|
+| `read_file` | safe | 读文件,>1MB 截断,offset/limit | 路径必须在 cwd 内 |
+| `write_file` | confirm | 完全覆盖,自动 mkdir | 后缀白名单(`.md` `.ts` `.json` 等) |
+| `edit_file` | confirm | 字符串精确替换,`old_string` 唯一 | 同上 |
+| `grep` | safe | ripgrep 优先,grep 兜底 | 收敛到 cwd |
+| `glob` | safe | fast-glob | base 必须可解析进 cwd |
+| `http_fetch` | **dangerous** | GET/POST,响应截断 100KB | POST 需要 `--allow-mutations` |
+| `delete_file` | **dangerous** | 永久删除文件 | **禁止删目录**;yolo 也无法跳过 |
+
+### 危险操作确认(规则)
+
+**所有 `confirm` / `dangerous` 工具调用前,UI 弹出醒目确认框**:
+
+- **颜色分级**:`confirm` 黄色边框,`dangerous` 红色双线边框 + `⚠ DANGEROUS ACTION` 标
+- **变更预览**:
+  - `write_file` → 展示旧内容(若存在) + 新内容前 200 字符
+  - `edit_file` → `-old_string` / `+new_string` diff
+  - `delete_file` → 路径 + 字节数 + 内容前 100 字符
+  - `http_fetch` → URL + method + body 预览
+- **必须显式输入 `y` / `Y` 才确认**:`Enter` 键无效,防误碰
+- **`--yolo` 跳过 `confirm` 工具(`write_file` / `edit_file`),但 `dangerous` 工具(`http_fetch` / `delete_file`)仍需确认**
+
+> 这是"写库 / 删文件 / 发版 / 调用外部 API"必须弹醒目确认框的硬性约束;`safe` 工具(`read_file` / `grep` / `glob`)不弹框。
 
 ## 测试
 
