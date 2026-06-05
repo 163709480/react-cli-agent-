@@ -11,6 +11,8 @@ describe('loadConfig', () => {
     'OPENAI_BASE_URL',
     'OPENAI_MODEL',
     'AGENT_MAX_CONTEXT_TOKENS',
+    'AGENT_MAX_TURNS',
+    'AGENT_MAX_TOOL_CALLS',
   ];
   let home: string;
 
@@ -74,5 +76,19 @@ describe('loadConfig', () => {
     process.env.OPENAI_API_KEY = 'sk-test-123';
     const cfg = loadConfig({ provider: 'deepseek' });
     expect(cfg.openaiApiKey).toBe('sk-test-123');
+  });
+
+  it('AGENT_MAX_TURNS / AGENT_MAX_TOOL_CALLS 解析', () => {
+    process.env.AGENT_MAX_TURNS = '8';
+    process.env.AGENT_MAX_TOOL_CALLS = '20';
+    const cfg = loadConfig();
+    expect(cfg.maxTurns).toBe(8);
+    expect(cfg.maxToolCalls).toBe(20);
+  });
+
+  it('未传 env 时,使用默认 12 / 30', () => {
+    const cfg = loadConfig();
+    expect(cfg.maxTurns).toBe(12);
+    expect(cfg.maxToolCalls).toBe(30);
   });
 });

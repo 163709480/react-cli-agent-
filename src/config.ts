@@ -10,11 +10,15 @@ export interface Config {
   maxContextTokens: number;
   writeableExts: string[];
   providerName: string;
+  maxTurns: number;       // default 12
+  maxToolCalls: number;   // default 30
 }
 
 const DEFAULT_PROVIDER = 'deepseek';
 const DEFAULT_MAX_CONTEXT = 120000;
 const DEFAULT_EXTS = ['.md', '.ts', '.tsx', '.js', '.jsx', '.json', '.yaml', '.yml', '.toml', '.txt'];
+const DEFAULT_MAX_TURNS = 12;
+const DEFAULT_MAX_TOOL_CALLS = 30;
 
 function loadJsonConfig(): Partial<Config> {
   const p = path.join(os.homedir(), '.agent', 'config.json');
@@ -65,6 +69,14 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
       10,
     ),
     writeableExts: file.writeableExts ?? DEFAULT_EXTS,
+    maxTurns: parseInt(
+      process.env.AGENT_MAX_TURNS ?? String(file.maxTurns ?? DEFAULT_MAX_TURNS),
+      10,
+    ),
+    maxToolCalls: parseInt(
+      process.env.AGENT_MAX_TOOL_CALLS ?? String(file.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS),
+      10,
+    ),
     providerName,
   };
 }
