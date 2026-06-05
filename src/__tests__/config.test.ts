@@ -91,4 +91,10 @@ describe('loadConfig', () => {
     expect(cfg.maxTurns).toBe(12);
     expect(cfg.maxToolCalls).toBe(30);
   });
+
+  it('opts.maxTurns 覆盖 env', () => {
+    process.env.AGENT_MAX_TURNS = '5';
+    const cfg = loadConfig({ maxTurns: 99 });
+    expect(cfg.maxTurns).toBe(99);
+  });
 });

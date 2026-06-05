@@ -18,6 +18,8 @@ interface Args {
    */
   auditMode: 'default' | 'path' | 'off';
   auditPath?: string;
+  maxTurns?: number;
+  maxToolCalls?: number;
 }
 
 function parseArgs(argv: string[]): Args {
@@ -34,6 +36,22 @@ function parseArgs(argv: string[]): Args {
     else if (a === '--allow-mutations') args.allowMutations = true;
     else if (a === '--cwd') args.cwd = argv[++i] ?? args.cwd;
     else if (a === '--provider') args.provider = argv[++i];
+    else if (a === '--max-turns') {
+      const n = parseInt(argv[++i] ?? '', 10);
+      if (!Number.isFinite(n) || n < 1) {
+        process.stderr.write('--max-turns 必须是正整数\n');
+        process.exit(2);
+      }
+      args.maxTurns = n;
+    }
+    else if (a === '--max-tool-calls') {
+      const n = parseInt(argv[++i] ?? '', 10);
+      if (!Number.isFinite(n) || n < 1) {
+        process.stderr.write('--max-tool-calls 必须是正整数\n');
+        process.exit(2);
+      }
+      args.maxToolCalls = n;
+    }
     else if (a === '--no-audit-log') {
       if (args.auditMode !== 'default') {
         process.stderr.write('audit flag conflict: --no-audit-log combined with --audit-log\n');
@@ -73,7 +91,12 @@ import('node:fs').then(async ({ existsSync, readFileSync }) => {
 
   const config = (() => {
     try {
-      return loadConfig({ provider: args.provider });
+      return loadConfig({
+        provider: args.provider,
+        // CLI 优先级最高:覆盖 env
+        maxTurns: args.maxTurns,
+        maxToolCalls: args.maxToolCalls,
+      });
     } catch (e) {
       process.stderr.write(`${(e as Error).message}\n`);
       process.exit(2);

@@ -31,6 +31,8 @@ function loadJsonConfig(): Partial<Config> {
 
 export interface LoadConfigOptions {
   provider?: string;
+  maxTurns?: number;
+  maxToolCalls?: number;
 }
 
 export function loadConfig(opts: LoadConfigOptions = {}): Config {
@@ -70,11 +72,11 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
     ),
     writeableExts: file.writeableExts ?? DEFAULT_EXTS,
     maxTurns: parseInt(
-      process.env.AGENT_MAX_TURNS ?? String(file.maxTurns ?? DEFAULT_MAX_TURNS),
+      String(opts.maxTurns ?? process.env.AGENT_MAX_TURNS ?? file.maxTurns ?? DEFAULT_MAX_TURNS),
       10,
     ),
     maxToolCalls: parseInt(
-      process.env.AGENT_MAX_TOOL_CALLS ?? String(file.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS),
+      String(opts.maxToolCalls ?? process.env.AGENT_MAX_TOOL_CALLS ?? file.maxToolCalls ?? DEFAULT_MAX_TOOL_CALLS),
       10,
     ),
     providerName,
