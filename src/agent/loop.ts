@@ -1,7 +1,8 @@
 import { chatCompletionStream } from '../llm/stream.js';
 import { findTool, getToolDescriptors } from './tools.js';
-import { shouldCompress, compress } from './context.js';
+import { shouldCompress, compress, estimateTokens } from './context.js';
 import { fallbackSummary, loadCompactInstructions, summarizeConversation } from './summarizer.js';
+import { hotCut } from './hotCut.js';
 import { SandboxError, ToolError } from '../safety/errors.js';
 import type {
   Message,
@@ -63,9 +64,17 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
   };
 
   const messages: Message[] = [...initialMessages];
+  const limits = input.limits ?? {};
+  const maxTurns = limits.maxTurns ?? 12;
+  const maxToolCalls = limits.maxToolCalls ?? 30;
+  let llmTurns = 0;
+  let toolCallCount = 0;
+  let compressions = 0;
+  let hotCuts = 0;
   const descriptors: ChatCompletionTool[] = getToolDescriptors(tools) as unknown as ChatCompletionTool[];
 
   if (shouldCompress(messages, maxContextTokens)) {
+    compressions++;
     emit({ type: 'text_delta', delta: '[context compressed]\n' });
     const compactInstructions = await loadCompactInstructions(cwd);
     const compressed = await compress(messages, async (text) => {
@@ -88,7 +97,7 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
     messages.push(...compressed);
   }
 
-  let finishReason: 'stop' | 'length' | 'abort' | 'error' = 'stop';
+  let finishReason: 'stop' | 'length' | 'abort' | 'error' | 'limit' = 'stop';
 
   try {
     let continueLoop = true;
@@ -99,6 +108,27 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
       const toolCalls: NonNullable<Message['tool_calls']> = [];
       let sawFinish = false;
       let roundFinishReason: 'stop' | 'length' = 'stop';
+
+      // L2: turn 数护栏
+      llmTurns++;
+      if (llmTurns > maxTurns) {
+        const errMsg = `Reached maxTurns=${maxTurns}; stopping.`;
+        emit({ type: 'error', error: errMsg });
+        emit({ type: 'done', finishReason: 'limit' });
+        return {
+          messages,
+          finishReason: 'limit',
+          metrics: { llmTurns, toolCalls: toolCallCount, compressions, hotCuts },
+        };
+      }
+      // L4: hot cut — 入 LLM 前最后一道闸
+      if (estimateTokens(messages) > maxContextTokens) {
+        const r = hotCut(messages, maxContextTokens);
+        if (r.cutCount > 0) {
+          hotCuts++;
+          emit({ type: 'text_delta', delta: `[hot-cut: ${r.cutCount} messages truncated]\n` });
+        }
+      }
 
       await withRetry(async () => {
         textBuf = '';
@@ -158,6 +188,18 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
       }
 
       for (const tc of toolCalls) {
+        // L3: tool 数护栏(在 execute 之前)
+        if (toolCallCount >= maxToolCalls) {
+          const errMsg = `Reached maxToolCalls=${maxToolCalls}; stopping.`;
+          emit({ type: 'error', error: errMsg });
+          emit({ type: 'done', finishReason: 'limit' });
+          return {
+            messages,
+            finishReason: 'limit',
+            metrics: { llmTurns, toolCalls: toolCallCount, compressions, hotCuts },
+          };
+        }
+        toolCallCount++;
         const tool = findTool(tools, tc.function.name);
         let resultStr: string;
         if (!tool) {
@@ -212,5 +254,9 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
 
   emit({ type: 'phase', phase: 'idle' });
   emit({ type: 'done', finishReason });
-  return { messages, finishReason };
+  return {
+    messages,
+    finishReason,
+    metrics: { llmTurns, toolCalls: toolCallCount, compressions, hotCuts },
+  };
 }
