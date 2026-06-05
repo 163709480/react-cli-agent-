@@ -205,6 +205,10 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
           allowMutations,
         },
         auditSink: auditSinkRef.current ?? undefined,
+        limits: {
+          maxTurns: config.maxTurns,
+          maxToolCalls: config.maxToolCalls,
+        },
       });
     } finally {
       setBusy(false);
