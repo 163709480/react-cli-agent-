@@ -12,8 +12,12 @@ export function estimateTokens(messages: Message[]): number {
 }
 
 /** 是否需要压缩? */
-export function shouldCompress(messages: Message[], maxContextTokens: number): boolean {
-  return estimateTokens(messages) > maxContextTokens * 0.7;
+export function shouldCompress(
+  messages: Message[],
+  maxContextTokens: number,
+  thresholdMultiplier = 0.7,
+): boolean {
+  return estimateTokens(messages) > maxContextTokens * thresholdMultiplier;
 }
 
 function formatMessageForSummary(m: Message): string {
