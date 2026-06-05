@@ -486,7 +486,7 @@ describe('runTurn', () => {
     // llmTurns 是 4:maxTurns=3 时,llmTurns=1,2,3 三轮都 OK;第 4 轮 llmTurns=4 > 3 触发 limit 立即 return
     expect(r.metrics?.llmTurns).toBe(4);
     // 3 个 tool call 都执行成功
-    expect((r.metrics?.toolCallCount ?? r.metrics?.toolCalls) ?? 0).toBe(3);
+    expect(r.metrics?.toolCalls).toBe(3);
   });
 
   it('maxToolCalls 触发后 stop', async () => {
@@ -508,9 +508,7 @@ describe('runTurn', () => {
         { type: 'done', finishReason: 'stop' },
       ]),
     );
-    fakeStream.mockReturnValueOnce(
-      asyncIterFromArray([{ type: 'done', finishReason: 'stop' }]),
-    );
+    // L3 在 3rd tool 之前就触发,不会再调 LLM,所以不需要 mock 第二次
     const tmpCwd = await import('node:fs/promises').then((m) => m.mkdtemp('/tmp/agent-loop-'));
     tmpCwds.push(tmpCwd);
     await import('node:fs/promises').then((m) => m.writeFile(`${tmpCwd}/a.txt`, 'x'));
@@ -528,8 +526,8 @@ describe('runTurn', () => {
       limits: { maxToolCalls: 2 },
     });
     expect(r.finishReason).toBe('limit');
-    // toolCallCount or toolCalls key (the latter is the spec field name; loop.ts uses internal `toolCallCount` var, returns as `toolCalls`)
-    expect((r.metrics?.toolCallCount ?? r.metrics?.toolCalls) ?? 0).toBeGreaterThanOrEqual(2);
+    // L3 触发时 toolCalls 已 ≥ maxToolCalls(2)
+    expect(r.metrics?.toolCalls).toBeGreaterThanOrEqual(2);
   });
 
   it('mid-turn 压缩:tool_call_end 后压一次再调 LLM', async () => {
@@ -572,10 +570,15 @@ describe('runTurn', () => {
       model: 'fake',
       maxContextTokens: 1000, // 0.7 * 1000 = 700
     });
-    // 期望看到 phase=compressing
-    const phases = events.filter((e) => (e as { type: string }).type === 'phase') as { type: string; phase?: string }[];
-    expect(phases.some((p) => p.phase === 'compressing')).toBe(true);
-    expect((r.metrics?.compressions ?? 0)).toBeGreaterThanOrEqual(1);
+    // 期望看到 tool_call_end 之后出现 phase=compressing(L1 mid-turn 路径)
+    const tcEndIdx = events.findIndex((e) => (e as { type: string }).type === 'tool_call_end');
+    expect(tcEndIdx).toBeGreaterThanOrEqual(0);
+    const afterTcEnd = events.slice(tcEndIdx + 1);
+    const midTurnCompress = afterTcEnd.find(
+      (e) => (e as { type: string; phase?: string }).type === 'phase' && (e as { phase?: string }).phase === 'compressing',
+    );
+    expect(midTurnCompress).toBeDefined();
+    expect(r.metrics?.compressions).toBeGreaterThanOrEqual(1);
   });
 
   it('hot cut 在 LLM 调用前自动裁', async () => {
@@ -615,7 +618,7 @@ describe('runTurn', () => {
       (e) => (e as { type: string }).type === 'text_delta' && typeof (e as { delta?: string }).delta === 'string' && (e as { delta: string }).delta.includes('[hot-cut:'),
     );
     expect(hotCutText).toBeDefined();
-    expect((r.metrics?.hotCuts ?? 0)).toBeGreaterThanOrEqual(1);
+    expect(r.metrics?.hotCuts).toBeGreaterThanOrEqual(1);
   });
 
   it('hot cut 不砍 system', async () => {
@@ -708,9 +711,7 @@ describe('runTurn', () => {
     });
     expect(r.metrics).toBeDefined();
     expect(r.metrics?.llmTurns).toBe(2);
-    // toolCalls 可能是 0 或 1,取决于 toolCallCount 变量名;两者都接受
-    const tc = r.metrics?.toolCallCount ?? r.metrics?.toolCalls ?? 0;
-    expect(tc).toBe(1);
+    expect(r.metrics?.toolCalls).toBe(1);
     expect(r.metrics?.compressions).toBe(0);
     expect(r.metrics?.hotCuts).toBe(0);
   });
@@ -748,5 +749,42 @@ describe('runTurn', () => {
     expect(r.metrics).toBeDefined();
     // maxTurns=2:llmTurns=1,2 OK;第 3 轮 llmTurns=3 > 2 触发 limit
     expect(r.metrics?.llmTurns).toBe(3);
+  });
+
+  it('regression: 短 messages 触发 shouldCompress 时,compress 不会清空 messages', async () => {
+    // 1 条巨大 user 消息 → tokens > 0.7 * maxContext,触发 shouldCompress
+    // 但 messages.length=2 ≤ 7 → compress() 走 early-return 路径
+    // 老代码 return messages(原引用),loop 的 messages.length=0 会清空
+    // 修后 return [...messages](浅拷贝),loop 推回去不丢消息
+    fakeStream.mockReturnValueOnce(
+      asyncIterFromArray([
+        { type: 'text_delta', delta: 'ok' },
+        { type: 'done', finishReason: 'stop' },
+      ]),
+    );
+    const big = 'x'.repeat(5000);
+    const initialMsgs: Message[] = [
+      { role: 'system', content: 'sys' },
+      { role: 'user', content: big },
+    ];
+    const r = await runTurn({
+      messages: initialMsgs,
+      tools: [],
+      cwd: '/tmp',
+      yolo: false,
+      onEvent: () => {},
+      onConfirm: async () => false,
+      signal: new AbortController().signal,
+      client: fakeClient,
+      model: 'fake',
+      maxContextTokens: 1000, // 0.7 * 1000 = 700,5000 char 必超
+    });
+    // runTurn 返回的 messages 至少含 system + user(可能多了 summary / 兜底标记)
+    // 关键断言:system + user 都还在,没被清空
+    expect(r.messages.find((m) => m.role === 'system')?.content).toBe('sys');
+    // user 内容应在(可能没变、可能变了)
+    const finalUser = r.messages.find((m) => m.role === 'user');
+    expect(finalUser).toBeDefined();
+    expect(r.finishReason).toBe('stop');
   });
 });

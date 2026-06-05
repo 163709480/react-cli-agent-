@@ -45,7 +45,7 @@ export async function compress(
   messages: Message[],
   summarizer: (text: string) => Promise<string>,
 ): Promise<Message[]> {
-  if (messages.length <= 7) return messages; // 不够折的,不动
+  if (messages.length <= 7) return [...messages]; // 不够折的,不动;返回拷贝避免 caller 突变影响我们
 
   const system = messages.find((m) => m.role === 'system');
   const tail = messages.slice(-6);

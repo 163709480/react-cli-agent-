@@ -126,6 +126,8 @@ describe('compress', () => {
     ];
     const out = await compress(msgs, summarizer);
     expect(summarizer).not.toHaveBeenCalled();
-    expect(out).toBe(msgs);
+    // 返回浅拷贝(避免 caller 突变影响,见 loop.ts 的 messages.length=0 模式)
+    expect(out).not.toBe(msgs);
+    expect(out).toEqual(msgs);
   });
 });
