@@ -3,6 +3,29 @@
 All notable changes to this project will be documented in this file.
 Format: roughly [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.0] - 2026-06-06
+
+### Added
+- **Context compression v2: 4-layer defense**
+  - L1 mid-turn incremental compression (fires after each `tool_call_end` when `shouldCompress` is true)
+  - L2 turn guard (`maxTurns`, default 12) — emits `error` + `done: 'limit'` and exits the loop
+  - L3 tool guard (`maxToolCalls`, default 30) — same exit path, but triggered by tool execution count
+  - L4 hot cut (`hotCut(messages, maxContextTokens)`) — best-effort pre-LLM truncation of old tool messages (sets content to `[truncated for context window]` marker; preserves `id`/`role`/`tool_call_id` for reference continuity)
+- New `compressing` phase in `AgentEvent` and `HeadStatus` UI — shows `before → after (X% reduction) tokens · duration`
+- `RunTurnInput.limits?` (`maxTurns?` / `maxToolCalls?`)
+- `RunTurnResult.metrics?` (`llmTurns` / `toolCalls` / `compressions` / `hotCuts`)
+- New `finishReason: 'limit'` (distinct from `'error'` so UI/audit can tell "model stopped" from "resource exhausted")
+- CLI flags `--max-turns` and `--max-tool-calls`
+- Env vars `AGENT_MAX_TURNS` and `AGENT_MAX_TOOL_CALLS`
+- `Config.maxTurns` and `Config.maxToolCalls` (also via `~/.agent/config.json`)
+
+### Changed
+- `shouldCompress()` accepts optional `thresholdMultiplier` (default `0.7`, behavior preserved)
+- `compress()` and `hotCut()` early-return paths now return shallow copies (not the input array reference), preventing a latent aliasing bug where `loop.ts` mutation could wipe the messages array
+
+### Fixed
+- `loop.ts` mutation of `messages` after `compress()` no longer wipes the conversation when `compress()` early-returns on `messages.length <= 7` (was a latent v0.1 bug, now reachable in v2 with default `maxContextTokens` and large pasted prompts)
+
 ## [0.1.0] - 2026-06-05
 
 ### Added

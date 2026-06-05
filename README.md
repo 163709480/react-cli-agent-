@@ -164,6 +164,8 @@ jq -c 'select(.type=="llm_usage") | {ts, callIndex, promptTokens, completionToke
 | `openaiBaseUrl` | `OPENAI_BASE_URL` | `https://api.deepseek.com/v1` |
 | `openaiModel` | `OPENAI_MODEL` | `deepseek-chat` |
 | `maxContextTokens` | `AGENT_MAX_CONTEXT_TOKENS` | `120000` |
+| `maxTurns` | `AGENT_MAX_TURNS` | `12` |
+| `maxToolCalls` | `AGENT_MAX_TOOL_CALLS` | `30` |
 | `writeableExts` | (仅 config 文件) | 见下 |
 
 `~/.agent/config.json` 示例:
@@ -172,6 +174,8 @@ jq -c 'select(.type=="llm_usage") | {ts, callIndex, promptTokens, completionToke
 {
   "openaiModel": "deepseek-chat",
   "maxContextTokens": 120000,
+  "maxTurns": 12,
+  "maxToolCalls": 30,
   "writeableExts": [".md", ".ts", ".json"]
 }
 ```

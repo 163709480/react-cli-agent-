@@ -170,6 +170,8 @@ Priority: `CLI flag` > `env var` > `~/.agent/config.json` > built-in default.
 | `openaiBaseUrl` | `OPENAI_BASE_URL` | `https://api.deepseek.com/v1` |
 | `openaiModel` | `OPENAI_MODEL` | `deepseek-chat` |
 | `maxContextTokens` | `AGENT_MAX_CONTEXT_TOKENS` | `120000` |
+| `maxTurns` | `AGENT_MAX_TURNS` | `12` |
+| `maxToolCalls` | `AGENT_MAX_TOOL_CALLS` | `30` |
 | `writeableExts` | (config file only) | `['.md','.ts','.tsx','.js','.jsx','.json','.yaml','.yml','.toml','.txt']` |
 
 Example `~/.agent/config.json`:

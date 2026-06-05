@@ -89,4 +89,15 @@ describe('agentEventToAuditFields', () => {
     expect((agentEventToAuditFields({ type: 'tool_call_end', toolCallId: 'c1', result: 'Error: oops' } as never) as { isError: boolean }).isError).toBe(true);
     expect((agentEventToAuditFields({ type: 'tool_call_end', toolCallId: 'c1', result: 'good' } as never) as { isError: boolean }).isError).toBe(false);
   });
+
+  it("phase='compressing' 也能审计", () => {
+    const sink = new InMemorySink('sid-cmp', 1);
+    sink.emit({ type: 'phase', phase: 'thinking' });
+    sink.emit({ type: 'phase', phase: 'compressing' });
+    sink.emit({ type: 'phase', phase: 'executing' });
+    const types = sink.events.map((e) => e.type);
+    expect(types).toEqual(['phase', 'phase', 'phase']);
+    const phases = sink.events.map((e) => e.phase);
+    expect(phases).toEqual(['thinking', 'compressing', 'executing']);
+  });
 });
