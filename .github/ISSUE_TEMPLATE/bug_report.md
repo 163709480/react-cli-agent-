@@ -29,7 +29,7 @@ What actually happened. Include the exact error message if any.
 
 - OS: [e.g. macOS 14, Ubuntu 22.04, Windows 11]
 - Node version: [output of `node -v`]
-- agent version: [output of `npm run dev -- --version` if available, else commit SHA]
+- `react-cli-agent` version: [output of `npm run dev -- --version` if available, else commit SHA]
 - LLM provider / model: [e.g. DeepSeek deepseek-chat]
 - Audit log enabled? [yes / no]
 

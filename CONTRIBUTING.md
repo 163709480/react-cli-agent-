@@ -1,13 +1,13 @@
 # Contributing
 
-Thanks for your interest in improving `agent`! This project is licensed under
+Thanks for your interest in improving `react-cli-agent`! This project is licensed under
 **AGPL-3.0** — by submitting a contribution (PR, issue, patch) you agree to
 license it under the same terms.
 
 ## Development setup
 
 ```bash
-git clone https://github.com/<owner>/agent.git
+git clone https://github.com/<owner>/react-cli-agent.git
 cd agent
 npm install
 cp .env.example .env       # set OPENAI_API_KEY for live tests

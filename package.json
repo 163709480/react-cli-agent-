@@ -1,13 +1,13 @@
 {
-  "name": "agent",
+  "name": "react-cli-agent",
   "version": "0.1.0",
   "private": false,
-  "description": "Local terminal ReAct agent with OpenAI-compatible LLM support, file sandbox, and tamper-proof audit logging (AGPL-3.0).",
+  "description": "Local terminal ReAct agent with OpenAI-compatible LLM, file sandbox, and tamper-proof audit log. AGPL-3.0.",
   "license": "AGPL-3.0",
-  "author": "agent",
+  "author": "react-cli-agent contributors",
   "type": "module",
   "bin": {
-    "agent": "./dist/cli.js"
+    "react-cli-agent": "./dist/cli.js"
   },
   "engines": {
     "node": ">=20.0.0"

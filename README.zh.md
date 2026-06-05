@@ -1,4 +1,4 @@
-# agent
+# react-cli-agent
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520.0.0-brightgreen.svg)](https://nodejs.org)
@@ -31,8 +31,8 @@
 ## 📦 安装
 
 ```bash
-git clone https://github.com/<owner>/agent.git
-cd agent
+git clone https://github.com/<owner>/react-cli-agent.git
+cd react-cli-agent
 npm install
 cp .env.example .env
 $EDITOR .env       # 填 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL
