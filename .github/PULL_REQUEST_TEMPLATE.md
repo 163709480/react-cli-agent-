@@ -29,7 +29,7 @@ npm run dev -- "..."
 - [ ] New code has tests where applicable
 - [ ] `DangerousConfirmBox` updated if the change touches a destructive tool
 - [ ] Audit log events updated if a new event type is added
-- [ ] `README.md` / `README.zh.md` updated for user-facing changes
+- [ ] `README.md` / `README.en.md` updated for user-facing changes
 
 ## AGPL-3.0
 

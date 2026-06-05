@@ -55,7 +55,7 @@ If you want to add a new tool (e.g. `code_search`):
    `DangerousConfirmBox` can show what will happen
 3. Add tests in `src/__tests__/tools/<name>.test.ts`
 4. Register in `TOOLS` array in `src/app.tsx`
-5. Document in `README.md` (English) and `README.zh.md`
+5. Document in `README.md` (中文) and `README.en.md` (English)
 
 ## Adding a new LLM provider
 

@@ -2,177 +2,171 @@
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520.0.0-brightgreen.svg)](https://nodejs.org)
-[![Tests](https://img.shields.io/badge/tests-123%20passed-brightgreen.svg)](#testing)
+[![Tests](https://img.shields.io/badge/tests-123%20passed-brightgreen.svg)](#测试)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5-blue.svg)](https://www.typescriptlang.org/)
 
-A local terminal **ReAct agent** built from scratch in TypeScript + Ink.
-Connects to any OpenAI-compatible LLM (DeepSeek / Moonshot / Ollama / vLLM / …).
-Inspired by Claude Code / Gemini CLI, but with no LangChain / Vercel AI SDK — the
-ReAct loop, tool calling, streaming, and audit logging are all hand-written.
+本地终端 **ReAct agent**,TypeScript + Ink 从零手写实现。
+接入任意 OpenAI 兼容 LLM(DeepSeek / Moonshot / Ollama / vLLM 等)。
+灵感来自 Claude Code / Gemini CLI,但**不依赖** LangChain / Vercel AI SDK —— ReAct 循环、工具调用、流式渲染、审计日志全部自己写。
 
-[中文文档](README.zh.md) · [Design docs](docs/) · [License (AGPL-3.0)](LICENSE)
-
----
-
-## ✨ Features
-
-- **Hand-written ReAct loop** — no agent framework, full control over behavior
-- **Streaming UX** — type-by-type text, dynamic tool status, Claude Code-style status bar
-- **File sandbox** — paths constrained to `cwd`, write-extension allowlist, realpath symlink resolution
-- **Dangerous-tool confirmation** — `write_file` / `edit_file` / `delete_file` / `http_fetch` show
-  a **prominent confirm box** (red double border + ⚠ + diff preview). The user **must type `y`**
-  to confirm; `Enter` alone does nothing.
-- **Compliance audit log** — every session writes a tamper-proof **JSONL with SHA-256 hash chain**
-  to `~/.agent/audit/<sessionId>.jsonl` by default. Auditors can independently verify with
-  `npx tsx src/audit/verifyChain.ts <file>`.
-- **Provider-agnostic** — OpenAI Chat Completions protocol. Switch providers via `--provider deepseek`
-  or just `OPENAI_BASE_URL`.
-- **Real summarization** — long sessions trigger a real LLM-driven summary; fallback to a
-  conservative truncation if it fails.
+[English](README.en.md) · [设计文档](docs/) · [许可证(AGPL-3.0)](LICENSE)
 
 ---
 
-## 📦 Install
+## ✨ 特性
+
+- **手写 ReAct 主循环** —— 不引 agent 框架,行为完全可控
+- **流式 UX** —— 逐字渲染、动态工具状态、Claude Code 风格顶部状态栏
+- **文件沙箱** —— 路径限制在 `cwd` 内、写后缀白名单、realpath 跟随符号链接
+- **危险操作醒目确认** —— `write_file` / `edit_file` / `delete_file` / `http_fetch`
+  触发时弹**红双线框 + ⚠ 警告 + 变更预览**,**必须输入字母 `y`** 才确认,`Enter` 键无效
+- **合规审计日志** —— 每个 session 自动写一份带 **SHA-256 哈希链**的 JSONL 到
+  `~/.agent/audit/<sessionId>.jsonl`(可改路径 / 关闭)。审计员可独立跑
+  `npx tsx src/audit/verifyChain.ts <file>` 验证完整性
+- **Provider 无关** —— 走 OpenAI Chat Completions 协议;`--provider deepseek` 切换 / 自定义 `OPENAI_BASE_URL`
+- **真实摘要压缩** —— 长会话触发 LLM 摘要,失败回退保守截断
+
+---
+
+## 📦 安装
 
 ```bash
 git clone https://github.com/<owner>/react-cli-agent.git
 cd react-cli-agent
 npm install
 cp .env.example .env
-$EDITOR .env       # set OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL
+$EDITOR .env       # 填 OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL
 ```
 
-Requires **Node.js ≥ 20**.
+需要 **Node.js ≥ 20**。
 
 ---
 
-## 🚀 Usage
+## 🚀 用法
 
-### Interactive REPL
+### 交互式 REPL
 
 ```bash
 npm run dev
 ```
 
-Type a task, hit Enter. The agent will:
-1. Stream LLM response token by token
-2. Decide whether to call a tool (read_file / grep / glob / write_file / …)
-3. Show a confirmation box for any destructive operation
-4. Loop until the LLM signals `stop`
+输入任务,回车。agent 会:
+1. 逐字流式输出 LLM 回复
+2. 决定是否调工具(读文件 / 搜 / 列 / 写 / …)
+3. 破坏性操作前弹醒目确认框
+4. 直到 LLM `stop` 退出循环
 
-### Single-shot headless
+### 单次 headless
 
 ```bash
-npm run dev -- "List all TypeScript files under src/"
+npm run dev -- "列出 src/ 下所有 TypeScript 文件"
 ```
 
-### Common flags
+### 常用参数
 
-| Flag | Effect |
+| 参数 | 作用 |
 |---|---|
-| `--yolo` | Skip confirmation for `confirm` tools. `dangerous` tools still require `y`. |
-| `--allow-mutations` | Permit `http_fetch POST` and other mutation effects |
-| `--provider <name>` | Pick a built-in provider preset (e.g. `deepseek`) |
-| `--cwd <path>` | Override the working directory |
-| `--audit-log <path?>` | Write audit log to `<path>` (omit value for default `~/.agent/audit/`) |
-| `--no-audit-log` | Disable audit log entirely (dev scenario) |
-| `-- "prompt"` | Positional prompt = headless mode, exit after one turn |
+| `--yolo` | 跳过 `confirm` 工具确认;`dangerous` 工具仍要求 `y` |
+| `--allow-mutations` | 允许 `http_fetch POST` 等副作用 |
+| `--provider <name>` | 选内置 provider 预设(目前 `deepseek`) |
+| `--cwd <path>` | 覆盖工作目录 |
+| `--audit-log <path?>` | 写审计到指定路径(不传值则用默认 `~/.agent/audit/`) |
+| `--no-audit-log` | 关闭审计(开发场景) |
+| `-- "prompt"` | 位置参数 = headless 模式,处理完一轮即退出 |
 
-### Examples
+### 示例
 
 ```bash
-# Default: DeepSeek, audit log on
-npm run dev -- "List src/agent directory"
+# 默认 DeepSeek,审计开启
+npm run dev -- "列出 src/agent 目录"
 
-# Write a file (will show red confirm box)
-npm run dev -- "Create README.md describing this project"
+# 写文件(会弹红框确认)
+npm run dev -- "创建一个 README.md 描述这个项目"
 
-# HTTP fetch (dangerous, always confirms)
-npm run dev -- --allow-mutations "POST https://api.example.com/webhook with body {...}"
+# HTTP 请求(危险,必确认)
+npm run dev -- --allow-mutations "POST https://api.example.com/webhook body {...}"
 
-# Disable audit
-npm run dev -- --no-audit-log "Quick question"
+# 关闭审计
+npm run dev -- --no-audit-log "快速提问"
 ```
 
 ---
 
-## 🛠 Tools
+## 🛠 工具
 
-| Tool | Safety | Function |
+| 工具 | safety | 功能 |
 |---|---|---|
-| `read_file` | safe | Read a file (1MB truncation, offset/limit) |
-| `write_file` | confirm | Full overwrite, auto `mkdir -p` |
-| `edit_file` | confirm | String replace, `old_string` must be unique |
-| `grep` | safe | ripgrep preferred, grep fallback |
+| `read_file` | safe | 读文件,>1MB 截断,offset/limit |
+| `write_file` | confirm | 完全覆盖,自动 mkdir |
+| `edit_file` | confirm | 字符串替换,`old_string` 必须唯一 |
+| `grep` | safe | ripgrep 优先,grep 兜底 |
 | `glob` | safe | fast-glob |
-| `http_fetch` | **dangerous** | GET/POST, 100KB truncation |
-| `delete_file` | **dangerous** | Permanent delete (refuses directories) |
+| `http_fetch` | **dangerous** | GET/POST,100KB 截断 |
+| `delete_file` | **dangerous** | 永久删除(禁止删目录) |
 
-> `safe` tools never prompt. `confirm` tools show a yellow bordered box.
-> `dangerous` tools show a **red double-bordered box with `⚠ DANGEROUS ACTION`**
-> and a full change preview (old/new content, URL+method, etc.). You **must
-> type the letter `y`** to confirm — the `Enter` key does nothing.
+> `safe` 工具不弹框;`confirm` 工具弹黄色边框;
+> `dangerous` 工具弹**红双线框 + `⚠ DANGEROUS ACTION` 标 + 完整变更预览**(旧/新内容、URL+method 等)。
+> **必须输入字母 `y` 才确认** —— `Enter` 键无效,防误碰。
 
 ---
 
-## 📋 Compliance Audit
+## 📋 合规审计
 
-Every session produces a tamper-proof **JSONL** with a SHA-256 hash chain.
+每个 session 自动生成带 **SHA-256 哈希链**的 **JSONL** 操作日志,任何字节级篡改/删除都会被发现。
 
 ```bash
-# Default location
+# 默认路径
 ~/.agent/audit/<sessionId>.jsonl
 
-# Custom path
+# 自定义
 npm run dev -- --audit-log /var/log/agent/x.jsonl "..."
 
-# Disable
+# 关闭
 npm run dev -- --no-audit-log "..."
 ```
 
-Event types: `session_start` / `user_prompt` / `phase` / `text_delta` /
+事件类型:`session_start` / `user_prompt` / `phase` / `text_delta` /
 `tool_call_start` / `user_confirm` / `tool_call_end` / `llm_usage` / `done` /
-`error` / `session_end`.
+`error` / `session_end`。
 
-### Auditor verification
+### 审计员独立验证
 
 ```bash
 npx tsx src/audit/verifyChain.ts <path-to-jsonl>
-# { ok: true, lines: <N> }           exit 0
-# { ok: false, lines: <N>, firstBreakSeq: <S>, reason: "<R>" }   exit 1
+# { ok: true, lines: <N> }                                 链完好
+# { ok: false, lines: <N>, firstBreakSeq: <S>, reason: ... }  链断裂
 ```
 
-Failure reasons: `hash-mismatch` (payload tampered), `prev-hash-mismatch`
-(previous row tampered), `non-monotonic-seq` (row deleted),
-`parse-error` (malformed JSON), `missing-field` (hash/prevHash/seq absent).
+失败原因:`hash-mismatch`(内容被改)/ `prev-hash-mismatch`(上一行被改)/
+`non-monotonic-seq`(行被删)/ `parse-error`(JSON 损坏)/ `missing-field`(缺字段)。
 
-### Reading logs
+### 常用 jq 模式
 
 ```bash
-# Tool calls + user confirmations
+# 工具调用 + 用户确认
 jq -c 'select(.type=="tool_call_start" or .type=="tool_call_end" or .type=="user_confirm")' <file>
 
-# LLM token usage
+# LLM token 用量
 jq -c 'select(.type=="llm_usage") | {ts, callIndex, promptTokens, completionTokens, finishReason}' <file>
 ```
 
-Full design: [`docs/superpowers/specs/2026-06-05-audit-log-design.md`](docs/superpowers/specs/2026-06-05-audit-log-design.md).
+完整 spec:[`docs/superpowers/specs/2026-06-05-audit-log-design.md`](docs/superpowers/specs/2026-06-05-audit-log-design.md)。
 
 ---
 
-## ⚙️ Configuration
+## ⚙️ 配置
 
-Priority: `CLI flag` > `env var` > `~/.agent/config.json` > built-in default.
+优先级:`CLI flag` > `env var` > `~/.agent/config.json` > 内置默认。
 
-| Key | Env var | Default |
+| Key | 环境变量 | 默认值 |
 |---|---|---|
-| `openaiApiKey` | `OPENAI_API_KEY` | (required) |
+| `openaiApiKey` | `OPENAI_API_KEY` | (必填) |
 | `openaiBaseUrl` | `OPENAI_BASE_URL` | `https://api.deepseek.com/v1` |
 | `openaiModel` | `OPENAI_MODEL` | `deepseek-chat` |
 | `maxContextTokens` | `AGENT_MAX_CONTEXT_TOKENS` | `120000` |
-| `writeableExts` | (config file only) | `['.md','.ts','.tsx','.js','.jsx','.json','.yaml','.yml','.toml','.txt']` |
+| `writeableExts` | (仅 config 文件) | 见下 |
 
-Example `~/.agent/config.json`:
+`~/.agent/config.json` 示例:
 
 ```json
 {
@@ -184,57 +178,54 @@ Example `~/.agent/config.json`:
 
 ---
 
-## 🧪 Testing
+## 🧪 测试
 
 ```bash
-npm test           # 123 tests across 21 files
-npm run typecheck  # tsc --noEmit, must be clean
+npm test           # 123 个测试,21 个文件
+npm run typecheck  # tsc --noEmit,必须干净
 ```
 
 ---
 
-## 🏗 Architecture
+## 🏗 架构
 
 ```
-UI layer (Ink + React)
+UI 层 (Ink + React)
   src/cli.tsx → src/app.tsx → src/components/*
                 ↓ AgentEvent
-Agent core (hand-written ReAct)
-  src/agent/loop.ts ← src/agent/context.ts (compress)
+Agent 核心 (手写 ReAct)
+  src/agent/loop.ts ← src/agent/context.ts (压缩)
   src/agent/schema.ts (zod → JSON Schema)
-  src/agent/tools.ts (registry)
+  src/agent/tools.ts (注册表)
                 ↓
-LLM adapter ───── Tools ───── Sandbox
+LLM 适配 ───── 工具 ───── 沙箱
   src/llm/         src/tools/   src/safety/
-  (OpenAI compat)  (6+1 tools)  (path/extension)
+  (OpenAI 兼容)    (7 个工具)   (路径/后缀)
                 ↓
-Audit (compliance)
-  src/audit/  (canonical JSON, SHA-256 hash chain, JSONL sink)
+审计 (合规)
+  src/audit/  (canonical JSON + SHA-256 哈希链 + JSONL 落盘)
 ```
 
-Design docs in [`docs/superpowers/`](docs/superpowers/).
+设计文档在 [`docs/superpowers/`](docs/superpowers/)。
 
 ---
 
-## 🤝 Contributing
+## 🤝 贡献
 
-PRs welcome! See [`CONTRIBUTING.md`](CONTRIBUTING.md) for dev setup, code style, and the PR process.
-For security issues, read [`SECURITY.md`](SECURITY.md) — please do not file public issues for
-vulnerabilities.
-
----
-
-## 📜 License
-
-**AGPL-3.0** — see [`LICENSE`](LICENSE).
-
-This is a strong copyleft license. If you run a modified version of this agent as a network
-service (e.g. a hosted agent product), you **must** publish the source of your modifications
-to your users under the same license. See section 13 of the AGPL for details.
+欢迎 PR!开发规范与提交流程见 [`CONTRIBUTING.md`](CONTRIBUTING.md)。
+安全问题请读 [`SECURITY.md`](SECURITY.md) —— **不要**在公开 issue 里提漏洞。
 
 ---
 
-## 🗺 Roadmap
+## 📜 许可证
 
-Tracked in [`docs/NEXT_STEPS_AND_FEATURE_DESIGN.md`](docs/NEXT_STEPS_AND_FEATURE_DESIGN.md).
-Priorities: resource guards (`--max-turns`), session persistence, additional provider presets.
+**AGPL-3.0** —— 见 [`LICENSE`](LICENSE)。
+
+强 copyleft:如果你把修改后的版本作为网络服务提供(比如托管的 agent 产品),**必须**把修改的源代码以同样协议公开发布给用户。详见 AGPL 第 13 节。
+
+---
+
+## 🗺 路线图
+
+见 [`docs/NEXT_STEPS_AND_FEATURE_DESIGN.md`](docs/NEXT_STEPS_AND_FEATURE_DESIGN.md)。
+近期重点:资源护栏(`--max-turns`)、会话持久化、更多 provider 预设。
