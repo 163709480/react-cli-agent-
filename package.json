@@ -17,7 +17,8 @@
     "build": "tsc",
     "test": "vitest run",
     "test:watch": "vitest",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "push:github": "bash scripts/push-to-github.sh"
   },
   "dependencies": {
     "@inkjs/ui": "^2.0.0",
