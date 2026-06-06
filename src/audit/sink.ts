@@ -162,6 +162,9 @@ export function agentEventToAuditFields(ev: AgentEvent): Record<string, unknown>
     case 'error': return { type: ev.type, error: ev.error };
     case 'phase': return { type: ev.type, phase: ev.phase, ...(ev.toolName ? { toolName: ev.toolName } : {}) };
     case 'user_confirm': return { type: ev.type, toolCallId: ev.toolCallId, toolName: ev.toolName, approved: ev.approved, latencyMs: ev.latencyMs };
+    case 'todo_updated': return { type: ev.type, todoCount: ev.todos.length, todos: ev.todos };
+    case 'ask_user': return { type: ev.type, callId: ev.callId, question: ev.question, options: ev.options, multiSelect: ev.multiSelect };
+    case 'ask_user_resolved': return { type: ev.type, callId: ev.callId, answer: ev.answer };
     case 'llm_usage': return { type: ev.type, callIndex: ev.callIndex, promptTokens: ev.promptTokens, completionTokens: ev.completionTokens, finishReason: ev.finishReason };
   }
 }

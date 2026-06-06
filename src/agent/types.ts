@@ -1,5 +1,14 @@
 import type { ZodType, ZodTypeDef } from 'zod';
 import type { AuditSink } from '../audit/sink.js';
+import type { TodoItem } from './sessionState.js';
+
+export interface AskUserRequest {
+  question: string;
+  options: string[];
+  multiSelect: boolean;
+}
+
+export type AskUserAnswer = string | string[];
 
 /** LLM API 返回的原始消息角色 */
 export type Role = 'system' | 'user' | 'assistant' | 'tool';
@@ -45,6 +54,8 @@ export interface ToolCtx {
   /** 可选扩展:由 loop 注入,工具按需读取 */
   writeableExts?: string[];
   allowMutations?: boolean;
+  /** session-level mutable state (todos, etc.); 同一个 runTurn 内共享 */
+  sessionState: import('./sessionState.js').SessionState;
 }
 
 /** 消息(OpenAI Chat Completions 风格) */
@@ -75,6 +86,9 @@ export type AgentEvent =
   | { type: 'error'; error: string }
   | { type: 'phase'; phase: 'thinking' | 'executing' | 'idle' | 'compressing'; toolName?: string }
   | { type: 'user_confirm'; toolCallId: string; toolName: string; approved: boolean; latencyMs: number }
+  | { type: 'todo_updated'; todos: TodoItem[] }
+  | { type: 'ask_user'; callId: string; question: string; options: string[]; multiSelect: boolean }
+  | { type: 'ask_user_resolved'; callId: string; answer: AskUserAnswer }
   | { type: 'llm_usage'; callIndex: number; promptTokens: number; completionTokens: number; finishReason: string };
 
 /** Loop 输入 */
@@ -101,6 +115,10 @@ export interface RunTurnInput {
     maxTurns?: number;
     maxToolCalls?: number;
   };
+  /** session 状态: todos 等可写 store。loop 会自动注入到 ToolCtx.sessionState。 */
+  sessionState: import('./sessionState.js').SessionState;
+  /** AskUserQuestion 工具的交互回调。UI 必须实现,否则工具 execute 抛错。 */
+  onAskUser: (req: AskUserRequest) => Promise<AskUserAnswer>;
 }
 
 /** Loop 输出 */
