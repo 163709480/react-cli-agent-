@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import { Box, Text, useApp, useInput } from 'ink';
 import path from 'node:path';
 import os from 'node:os';
@@ -9,7 +9,11 @@ import { DangerousConfirmBox, type ConfirmSeverity } from './components/Dangerou
 import { buildPreview } from './components/buildPreview.js';
 import { HeadStatus, type LoopPhase } from './components/HeadStatus.js';
 import { Welcome } from './components/Welcome.js';
+import { AskUserDialog } from './components/AskUserDialog.js';
+import { TodoList } from './components/TodoList.js';
 import { runTurn } from './agent/loop.js';
+import { buildSystemPrompt } from './agent/systemPrompt.js';
+import { createSessionState, type TodoItem } from './agent/sessionState.js';
 import { readFileTool } from './tools/read_file.js';
 import { writeFileTool } from './tools/write_file.js';
 import { editFileTool } from './tools/edit_file.js';
@@ -17,11 +21,13 @@ import { grepTool } from './tools/grep.js';
 import { globTool } from './tools/glob.js';
 import { httpFetchTool } from './tools/http_fetch.js';
 import { deleteFileTool } from './tools/delete_file.js';
+import { todoWriteTool } from './tools/todo_write.js';
+import { askUserQuestionTool } from './tools/ask_user_question.js';
 import { createOpenAIClient } from './llm/client.js';
 import { loadConfig, type Config } from './config.js';
 import { JsonlFileSink, type AuditSink } from './audit/sink.js';
 import type OpenAI from 'openai';
-import type { AgentEvent, Message, ToolDef, ToolCall } from './agent/types.js';
+import type { AgentEvent, Message, ToolDef, ToolCall, AskUserRequest, AskUserAnswer } from './agent/types.js';
 import { v4 as uuid, v4 as uuidv4 } from 'uuid';
 
 const ERROR_DISPLAY_MS = 1500;
@@ -51,6 +57,7 @@ interface AppProps {
 
 const TOOLS: ToolDef[] = [
   readFileTool, writeFileTool, editFileTool, grepTool, globTool, httpFetchTool, deleteFileTool,
+  todoWriteTool, askUserQuestionTool,
 ];
 
 export function App({ yolo, allowMutations, cwd, headlessPrompt, config: providedConfig, auditMode, auditPath }: AppProps) {
@@ -74,6 +81,24 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
   const pendingResolveRef = useRef<((ok: boolean) => void) | null>(null);
   const auditSinkRef = useRef<AuditSink | null>(null);
   const sessionIdRef = useRef<string>('');
+
+  // v0.4 — Session state (todos) + AskUserQuestion 交互桥
+  const sessionState = React.useMemo(() => createSessionState(), []);
+  const [todos, setTodos] = useState<TodoItem[]>([]);
+  const [pendingQuestion, setPendingQuestion] = useState<AskUserRequest | null>(null);
+  const pendingAskResolveRef = useRef<((a: AskUserAnswer | '__canceled__') => void) | null>(null);
+
+  useEffect(() => {
+    sessionState.onChange = (next) => setTodos(next);
+    return () => { sessionState.onChange = undefined; };
+  }, [sessionState]);
+
+  const onAskUser = useCallback((req: AskUserRequest): Promise<AskUserAnswer> => {
+    return new Promise((resolve) => {
+      pendingAskResolveRef.current = resolve as (a: AskUserAnswer | '__canceled__') => void;
+      setPendingQuestion(req);
+    });
+  }, []);
 
   useEffect(() => {
     const cfg = providedConfig ?? loadConfig();
@@ -127,6 +152,12 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
   }, []);
 
   useInput((input, key) => {
+    // 优先级最高:question dialog 路由(独占)
+    // AskUserDialog 内部 useInput 已经处理方向键/空格/回车/Esc,
+    // 这里只需要让出 input 事件给子组件(ink 会自动路由)
+    if (pendingQuestion) {
+      return;
+    }
     if (busy && abortRef.current && (key.escape || (key.ctrl && input === 'c'))) {
       abortRef.current.abort();
       return;
@@ -150,7 +181,12 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
     if (!clientRef.current || !config) return;
     setStarted(true);
     const userMsg: Message = { role: 'user', content: text };
-    const newMsgs: Message[] = [...messages, userMsg];
+    const sysMsg: Message = { role: 'system', content: buildSystemPrompt() };
+    // 只在第一轮注入(没 assistant 消息时);后续轮不重复
+    const baseMsgs = messages.length === 0 || messages.every((m) => m.role !== 'assistant')
+      ? [sysMsg, ...messages]
+      : messages;
+    const newMsgs: Message[] = [...baseMsgs, userMsg];
     setMessages(newMsgs);
     const userDisplay: DisplayMessage = { id: uuid(), role: 'user', content: text };
     const assistantId = uuid();
@@ -209,6 +245,8 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
           maxTurns: config.maxTurns,
           maxToolCalls: config.maxToolCalls,
         },
+        sessionState,
+        onAskUser,
       });
     } finally {
       setBusy(false);
@@ -319,6 +357,7 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
           provider={config.providerName}
         />
       )}
+      <TodoList todos={todos} />
       <Box flexDirection="column" flexGrow={1} overflowY="hidden">
         <MessageList messages={display} />
       </Box>
@@ -354,6 +393,22 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
           name={activeTool.name}
           args={activeTool.args}
           state="pending"
+        />
+      )}
+      {pendingQuestion && (
+        <AskUserDialog
+          question={pendingQuestion.question}
+          options={pendingQuestion.options}
+          multiSelect={pendingQuestion.multiSelect}
+          onResolve={(ans) => {
+            setPendingQuestion(null);
+            if (ans === '__canceled__') {
+              pendingAskResolveRef.current?.('__canceled__');
+            } else {
+              pendingAskResolveRef.current?.(ans as AskUserAnswer);
+            }
+            pendingAskResolveRef.current = null;
+          }}
         />
       )}
       <Box marginTop={1}>
