@@ -3,6 +3,19 @@
 All notable changes to this project will be documented in this file.
 Format: roughly [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.3.0] - 2026-06-06
+
+### Added
+- **工具并发分区**——参考 Claude Code `partitionToolCalls` 模式。`read_file` / `glob` / `grep` 现在可在同一轮 LLM 响应中并发执行(parallel within a batch);`write_file` / `edit_file` / `delete_file` / `http_fetch` 仍按调用顺序串行,避免"读到了写之前的数据"。
+- 新模块 `src/agent/partition.ts` 暴露 `partitionToolCalls(toolCalls, tools)` 和 `isToolConcurrencySafe(call, tools)` —— 编排器可独立复用。
+- `ToolDef.concurrencySafe?: boolean` 字段(可选,默认 false,严格 fail-closed)。
+- 新测试:partition 7 例、tools-safety 2 例、types 2 例、loop 并发 1 例,共 12 新增。
+
+### Changed
+- `loop.ts` 的工具执行从"一次响应一个 tool call 串行"改为"按 partition 切批 + 批内 `Promise.all`",消息顺序与 LLM 返回顺序保持一致(由 `Promise.all` 的数组顺序保证)。
+- L1 mid-turn 压缩从"每个 tool 后做一次"挪到"整个 tool 批后做一次"(在 batch 内部不再做 compress,避免并发打架)。
+- 新增 L3 over-run 守门(`toolCallCount > maxToolCalls`),捕获单批内 N 个并发 tool 一次推过预算的边界情况。
+
 ## [0.2.0] - 2026-06-06
 
 ### Added
