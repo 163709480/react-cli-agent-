@@ -56,6 +56,8 @@ export interface ToolCtx {
   allowMutations?: boolean;
   /** session-level mutable state (todos, etc.); 同一个 runTurn 内共享 */
   sessionState: import('./sessionState.js').SessionState;
+  /** AskUserQuestion 工具的交互回调;UI 必须实现,否则该工具 execute 抛错 */
+  onAskUser: (req: AskUserRequest) => Promise<AskUserAnswer>;
 }
 
 /** 消息(OpenAI Chat Completions 风格) */

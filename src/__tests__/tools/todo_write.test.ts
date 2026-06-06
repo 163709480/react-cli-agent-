@@ -11,7 +11,8 @@ function makeCtx(): { ctx: ToolCtx } {
       abort: new AbortController().signal,
       confirmedByUser: true,
       sessionState,
-    } as ToolCtx,
+      onAskUser: async () => '',
+    } as unknown as ToolCtx,
   };
 }
 
