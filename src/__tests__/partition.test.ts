@@ -53,4 +53,47 @@ describe('partitionToolCalls', () => {
     expect(batches).toHaveLength(3);
     expect(batches.map((b) => b[0].id)).toEqual(['1', '2', '3']);
   });
+
+  it('未知工具名 → 当 unsafe(fail-closed),独自成批', () => {
+    const tools = [makeTool('a', true)];
+    const calls = [
+      makeCall('1', 'a'),
+      makeCall('2', 'unknown_xxx'),
+      makeCall('3', 'a'),
+    ];
+    const batches = partitionToolCalls(calls, tools);
+    expect(batches.map((b) => b.map((c) => c.id))).toEqual([
+      ['1'],
+      ['2'],
+      ['3'],
+    ]);
+  });
+
+  it('空输入 → 空批次数组', () => {
+    const tools = [makeTool('a', true)];
+    expect(partitionToolCalls([], tools)).toEqual([]);
+  });
+
+  it('单个 tool call → 单批', () => {
+    const tools = [makeTool('a', true)];
+    const batches = partitionToolCalls([makeCall('1', 'a')], tools);
+    expect(batches).toHaveLength(1);
+    expect(batches[0]).toHaveLength(1);
+  });
+
+  it('未声明 concurrencySafe 字段的 tool → 视为 unsafe', () => {
+    const tNoMark: ToolDef = {
+      name: 'x',
+      description: 'x',
+      safety: 'safe',
+      schema: z.object({}),
+      execute: async () => ({}),
+      // 故意不给 concurrencySafe
+    };
+    const batches = partitionToolCalls(
+      [makeCall('1', 'x'), makeCall('2', 'x')],
+      [tNoMark],
+    );
+    expect(batches).toHaveLength(2);
+  });
 });
