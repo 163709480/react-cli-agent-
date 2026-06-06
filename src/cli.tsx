@@ -3,6 +3,29 @@ import React from 'react';
 import { render } from 'ink';
 import { App } from './app.js';
 import { loadConfig } from './config.js';
+import { createRequire } from 'node:module';
+import { readFileSync } from 'node:fs';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+
+const require = createRequire(import.meta.url);
+// 读取 package.json 拿版本号
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const pkgPath = path.resolve(__dirname, '..', 'package.json');
+// 兼容:被 tsx 跑(根目录) vs 被 dist/cli.js 跑(上一级)
+let VERSION = '0.0.0';
+try {
+  const pkg = JSON.parse(readFileSync(pkgPath, 'utf-8'));
+  VERSION = pkg.version ?? VERSION;
+} catch {
+  // fallback: 尝试 import.meta.url 上一级或同级
+  try {
+    const pkg = JSON.parse(
+      readFileSync(path.resolve(process.cwd(), 'package.json'), 'utf-8'),
+    );
+    VERSION = pkg.version ?? VERSION;
+  } catch { /* keep default */ }
+}
 
 interface Args {
   yolo: boolean;
@@ -76,6 +99,50 @@ function parseArgs(argv: string[]): Args {
   }
   if (positional.length > 0) args.headlessPrompt = positional.join(' ');
   return args;
+}
+
+// 早期拦截: --version / --help(不需要加载 .env / 启动 TUI)
+for (const a of process.argv.slice(2)) {
+  if (a === '--version' || a === '-v') {
+    process.stdout.write(`react-cli-agent ${VERSION}\n`);
+    process.exit(0);
+  }
+  if (a === '--help' || a === '-h') {
+    process.stdout.write(
+      `react-cli-agent ${VERSION}\n` +
+        '\n' +
+        '用法: react-cli-agent [options] [prompt]\n' +
+        '\n' +
+        '选项:\n' +
+        '  --version, -v              输出版本号并退出\n' +
+        '  --help, -h                 打印本帮助并退出\n' +
+        '  --yolo                     跳过工具调用的安全审批(谨慎使用)\n' +
+        '  --allow-mutations          允许修改文件(默认只读)\n' +
+        '  --cwd <path>               设置工作目录\n' +
+        '  --provider <name>          指定 LLM provider(覆盖 env)\n' +
+        '  --max-turns <n>            单次会话最大 LLM turns(默认 12)\n' +
+        '  --max-tool-calls <n>       单次会话最大 tool calls(默认 30)\n' +
+        '  --audit-log [path]         审计日志:可选指定路径,省略则用默认 ~/.agent/audit/\n' +
+        '  --no-audit-log             关闭审计日志\n' +
+        '\n' +
+        '环境变量:\n' +
+        '  AGENT_PROVIDER             LLM provider(openai/anthropic/mock/...)\n' +
+        '  AGENT_MODEL                模型名\n' +
+        '  AGENT_API_KEY              provider API key\n' +
+        '  AGENT_BASE_URL             OpenAI 兼容 base URL\n' +
+        '  AGENT_MAX_CONTEXT_TOKENS   上下文窗口 token 上限\n' +
+        '  AGENT_MAX_TURNS            覆盖默认 max-turns\n' +
+        '  AGENT_MAX_TOOL_CALLS       覆盖默认 max-tool-calls\n' +
+        '\n' +
+        '示例:\n' +
+        '  react-cli-agent                          启动 TUI\n' +
+        '  react-cli-agent "重构 src/foo.ts"          headless 模式,直接跑完\n' +
+        '  react-cli-agent --max-turns 5            限制 5 轮 LLM 调用\n' +
+        '  react-cli-agent --audit-log ./audit.jsonl  写到指定路径\n' +
+        '\n',
+    );
+    process.exit(0);
+  }
 }
 
 const args = parseArgs(process.argv.slice(2));

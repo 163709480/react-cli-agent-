@@ -1,6 +1,6 @@
 {
   "name": "react-cli-agent",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": false,
   "description": "Local terminal ReAct agent with OpenAI-compatible LLM, file sandbox, and tamper-proof audit log. AGPL-3.0.",
   "license": "AGPL-3.0",
