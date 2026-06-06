@@ -28,6 +28,7 @@ export const globTool: ToolDef<z.infer<typeof schema>> = {
   name: 'glob',
   description: '在 cwd 内匹配文件路径,如 "src/**/*.ts"。',
   safety: 'safe',
+  concurrencySafe: true,
   schema,
   execute,
 };

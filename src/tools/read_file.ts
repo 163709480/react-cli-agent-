@@ -34,6 +34,7 @@ export const readFileTool: ToolDef<z.infer<typeof schema>> = {
   description:
     '读取文件内容。>1MB 会被截断。如需分块读取,可传 offset 和 limit(字节)。',
   safety: 'safe',
+  concurrencySafe: true,
   schema,
   execute,
 };

@@ -114,6 +114,7 @@ export const grepTool: ToolDef<z.infer<typeof schema>, z.input<typeof schema>> =
   description:
     '在 cwd 内用 ripgrep(优先)/grep 搜索正则。返回 {file, line, text} 列表。',
   safety: 'safe',
+  concurrencySafe: true,
   schema,
   execute,
 };
