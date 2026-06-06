@@ -55,6 +55,8 @@
 - **真实摘要压缩**——长会话触发 LLM 摘要,失败回退保守截断;v0.2 引入 4 层防御(L1 mid-turn / L2 turn guard / L3 tool guard / L4 hot cut)
 - **资源上限**——`--max-turns 12` / `--max-tool-calls 30`,防止失控(也可由环境变量配)
 - **工具并发执行**——v0.3 引入:连续出现的只读工具(`read_file` / `glob` / `grep`)会按 partition 合成一批并行执行;写入类工具仍按 LLM 调用顺序串行,避免"读到了写之前的数据"。
+- **TodoWrite 任务清单**——v0.4 引入:多步任务时 LLM 自动维护 1-7 条 todo,UI 顶部持续显示进度。
+- **AskUserQuestion 反问**——v0.4 引入:LLM 在 2-4 互斥方案间可弹单/多选题给用户,Esc 取消。
 
 ### 📦 依赖 & 部署
 

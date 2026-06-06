@@ -3,6 +3,22 @@
 All notable changes to this project will be documented in this file.
 Format: roughly [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.4.0] - 2026-06-06
+
+### Added
+- **TodoWrite 工具**(`todo_write`)——LLM 可在多步任务中维护 1-7 条任务清单,会话级 state,UI 实时渲染。
+- **AskUserQuestion 工具**(`ask_user_question`)——LLM 可弹出 2-4 选项的单/多选题,等用户决策。独立 Ink 组件 + useInput 路由。
+- **System Prompt 注入**——`src/agent/systemPrompt.ts` 在每轮会话开始时注入行为指引(TodoWrite / AskUserQuestion 使用建议)。
+- **SessionState**——`src/agent/sessionState.ts` 提供 session 级 mutable state 通道(`SessionState.todos` + `onChange`)。
+- **3 个新 AgentEvent 变体**:`todo_updated` / `ask_user` / `ask_user_resolved`(`audit/sink.ts` 同步扩展 exhaustive switch)。
+- **新组件**:`AskUserDialog` (Ink 弹窗) + `TodoList` (会话顶部持续显示)。
+- 新测试:sessionState 4 例、systemPrompt 4 例、todo_write 6 例、ask_user_question 5 例、AskUserDialog 4 例,共 23 新增(154 → 180)。
+
+### Changed
+- `RunTurnInput` 加 2 个必填字段:`sessionState` + `onAskUser`。`ToolCtx` 加 `sessionState` 字段。
+- `loop.test.ts` 引入 `baseRunTurnArgs` helper,统一给所有 `runTurn({...})` 调用注入 `sessionState` + `onAskUser` 默认值。
+- 发现一个 tsconfig 缺口:`src/__tests__/**` 被 exclude,导致测试里漏传必填字段不会被 tsc 抓到(后续 v0.5 可以单独加 lint rule 修)。
+
 ## [0.3.0] - 2026-06-06
 
 ### Added
