@@ -26,6 +26,13 @@ export interface ToolDef<I = unknown, In = I> {
   name: string;
   description: string;
   safety: 'safe' | 'confirm' | 'dangerous';
+  /**
+   * 此工具的多个并发调用是否安全(只读 / 无外部副作用)。
+   * 未声明 = false(fail-closed)。声明为 true 表示:此工具对同一组 input
+   * 多次执行,结果与单次执行一致,且不会影响其他并发工具。
+   * 编排器会据此把"连续出现的 safe 工具"合成一批并行执行。
+   */
+  concurrencySafe?: boolean;
   schema: ZodType<I, ZodTypeDef, In>;
   execute(input: I, ctx: ToolCtx): Promise<unknown>;
 }
