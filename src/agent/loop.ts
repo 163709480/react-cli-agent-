@@ -54,7 +54,7 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
   const {
     messages: initialMessages, tools, cwd, yolo,
     onEvent, onConfirm, signal, client, model, maxContextTokens, extraCtx,
-    auditSink, onUsage,
+    auditSink, onUsage, sessionState, onAskUser,
   } = input;
 
   // 包装 onEvent:既通知 UI,也转一份给 auditSink(若提供)。
@@ -252,6 +252,7 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
                   try {
                     const out = await tool.execute(v.data, {
                       cwd, abort: signal, confirmedByUser: true,
+                      sessionState, onAskUser,
                       ...(extraCtx ?? {}),
                     } as never);
                     resultStr = stringifyResult(out);

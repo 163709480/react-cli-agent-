@@ -10,6 +10,16 @@ import { runTurn } from '../agent/loop.js';
 import { readFileTool } from '../tools/read_file.js';
 import { InMemorySink, type AuditSink } from '../audit/sink.js';
 import type { ToolDef, Message } from '../agent/types.js';
+import { createSessionState } from '../agent/sessionState.js';
+import type { RunTurnInput } from '../agent/types.js';
+
+function baseRunTurnArgs(overrides: Partial<RunTurnInput> = {}): RunTurnInput {
+  return {
+    sessionState: createSessionState(),
+    onAskUser: async () => '__canceled__',
+    ...overrides,
+  };
+}
 
 function asyncIterFromArray<T>(arr: T[]): AsyncIterable<T> {
   return {
@@ -49,7 +59,7 @@ describe('runTurn', () => {
       ]),
     );
     const events: unknown[] = [];
-    const r = await runTurn({
+    const r = await runTurn(baseRunTurnArgs({
       messages: [{ role: 'user', content: 'hi' }],
       tools: [],
       cwd: process.cwd(),
@@ -60,7 +70,7 @@ describe('runTurn', () => {
       client: fakeClient,
       model: 'fake',
       maxContextTokens: 120000,
-    });
+    }));
     expect(r.finishReason).toBe('stop');
     expect(events[events.length - 1]).toMatchObject({ type: 'done', finishReason: 'stop' });
     const assistant = r.messages.find((m) => m.role === 'assistant');
@@ -97,7 +107,7 @@ describe('runTurn', () => {
     );
 
     const events: unknown[] = [];
-    const r = await runTurn({
+    const r = await runTurn(baseRunTurnArgs({
       messages: [{ role: 'user', content: 'read a.txt' }],
       tools: [readFileTool],
       cwd: tmpCwd,
@@ -108,7 +118,7 @@ describe('runTurn', () => {
       client: fakeClient,
       model: 'fake',
       maxContextTokens: 120000,
-    });
+    }));
 
     const tcEnd = events.find((e) => (e as { type: string }).type === 'tool_call_end');
     expect(tcEnd).toBeDefined();
@@ -151,7 +161,7 @@ describe('runTurn', () => {
       m.mkdtemp('/tmp/agent-loop-'),
     );
     tmpCwds.push(tmpCwd);
-    const r = await runTurn({
+    const r = await runTurn(baseRunTurnArgs({
       messages: [{ role: 'user', content: 'read' }],
       tools: [confirmStub],
       cwd: tmpCwd,
@@ -162,7 +172,7 @@ describe('runTurn', () => {
       client: fakeClient,
       model: 'fake',
       maxContextTokens: 120000,
-    });
+    }));
     const toolMsg = r.messages.find((m) => m.role === 'tool');
     expect(toolMsg?.content).toMatch(/declined/i);
   });
@@ -191,7 +201,7 @@ describe('runTurn', () => {
       m.mkdtemp('/tmp/agent-loop-'),
     );
     tmpCwds.push(tmpCwd);
-    const r = await runTurn({
+    const r = await runTurn(baseRunTurnArgs({
       messages: [{ role: 'user', content: 'escape' }],
       tools: [readFileTool],
       cwd: tmpCwd,
@@ -202,7 +212,7 @@ describe('runTurn', () => {
       client: fakeClient,
       model: 'fake',
       maxContextTokens: 120000,
-    });
+    }));
     const toolMsg = r.messages.find((m) => m.role === 'tool');
     expect(toolMsg?.content).toMatch(/escapes cwd/);
   });
@@ -236,7 +246,7 @@ describe('runTurn', () => {
         { type: 'done', finishReason: 'stop' },
       ]),
     );
-    const r = await runTurn({
+    const r = await runTurn(baseRunTurnArgs({
       messages: [{ role: 'user', content: 'x' }],
       tools: [stub],
       cwd: '/tmp',
@@ -247,7 +257,7 @@ describe('runTurn', () => {
       client: fakeClient,
       model: 'fake',
       maxContextTokens: 120000,
-    });
+    }));
     expect(onConfirm).not.toHaveBeenCalled();
     const toolMsg = r.messages.find((m) => m.role === 'tool');
     expect(toolMsg?.content).toBe('wrote');
@@ -282,7 +292,7 @@ describe('runTurn', () => {
         { type: 'done', finishReason: 'stop' },
       ]),
     );
-    const r = await runTurn({
+    const r = await runTurn(baseRunTurnArgs({
       messages: [{ role: 'user', content: 'x' }],
       tools: [stub],
       cwd: '/tmp',
@@ -293,7 +303,7 @@ describe('runTurn', () => {
       client: fakeClient,
       model: 'fake',
       maxContextTokens: 120000,
-    });
+    }));
     expect(onConfirm).toHaveBeenCalledTimes(1);
     expect(execute).not.toHaveBeenCalled();
     const toolMsg = r.messages.find((m) => m.role === 'tool');
@@ -330,7 +340,7 @@ describe('runTurn', () => {
       m.writeFile(`${tmpCwd}/a.txt`, 'x'),
     );
     const events: { type: string; phase?: string; toolName?: string }[] = [];
-    await runTurn({
+    await runTurn(baseRunTurnArgs({
       messages: [{ role: 'user', content: 'go' }],
       tools: [readFileTool],
       cwd: tmpCwd,
@@ -341,7 +351,7 @@ describe('runTurn', () => {
       client: fakeClient,
       model: 'fake',
       maxContextTokens: 120000,
-    });
+    }));
     const phases = events.filter((e) => e.type === 'phase');
     // 期望:thinking(executing) thinking idle
     const summary = phases.map((p) => `${p.phase}${p.toolName ? `(${p.toolName})` : ''}`).join(' → ');
@@ -368,7 +378,7 @@ describe('runTurn', () => {
     tmpCwds.push(tmpCwd);
     await import('node:fs/promises').then((m) => m.writeFile(`${tmpCwd}/a.txt`, 'x'));
     const sink = new InMemorySink('sid-loop', 1);
-    await runTurn({
+    await runTurn(baseRunTurnArgs({
       messages: [{ role: 'user', content: 'go' }],
       tools: [readFileTool],
       cwd: tmpCwd,
@@ -380,7 +390,7 @@ describe('runTurn', () => {
       model: 'fake',
       maxContextTokens: 120000,
       auditSink: sink as unknown as AuditSink,
-    });
+    }));
     // 期望事件类型序列(简化断言)
     const types = sink.events.map((e) => e.type);
     expect(types).toEqual([
@@ -411,7 +421,7 @@ describe('runTurn', () => {
         { type: 'done', finishReason: 'stop' },
       ]),
     );
-    const r = await runTurn({
+    const r = await runTurn(baseRunTurnArgs({
       messages: [{ role: 'user', content: 'x' }],
       tools: [],
       cwd: '/tmp',
@@ -423,7 +433,7 @@ describe('runTurn', () => {
       model: 'fake',
       maxContextTokens: 120000,
       // 不传 auditSink
-    });
+    }));
     expect(r.finishReason).toBe('stop');
   });
 
@@ -435,7 +445,7 @@ describe('runTurn', () => {
       ]),
     );
     const usages: { promptTokens: number; completionTokens: number; finishReason: string }[] = [];
-    await runTurn({
+    await runTurn(baseRunTurnArgs({
       messages: [{ role: 'user', content: 'x' }],
       tools: [],
       cwd: '/tmp',
@@ -447,7 +457,7 @@ describe('runTurn', () => {
       model: 'fake',
       maxContextTokens: 120000,
       onUsage: (u) => usages.push(u),
-    });
+    }));
     expect(usages).toHaveLength(1);
     expect(usages[0]).toEqual({ promptTokens: 10, completionTokens: 5, finishReason: 'stop' });
   });
@@ -469,7 +479,7 @@ describe('runTurn', () => {
     const tmpCwd = await import('node:fs/promises').then((m) => m.mkdtemp('/tmp/agent-loop-'));
     tmpCwds.push(tmpCwd);
     await import('node:fs/promises').then((m) => m.writeFile(`${tmpCwd}/a.txt`, 'x'));
-    const r = await runTurn({
+    const r = await runTurn(baseRunTurnArgs({
       messages: [{ role: 'user', content: 'x' }],
       tools: [readFileTool],
       cwd: tmpCwd,
@@ -481,7 +491,7 @@ describe('runTurn', () => {
       model: 'fake',
       maxContextTokens: 120000,
       limits: { maxTurns: 3 },
-    });
+    }));
     expect(r.finishReason).toBe('limit');
     // llmTurns 是 4:maxTurns=3 时,llmTurns=1,2,3 三轮都 OK;第 4 轮 llmTurns=4 > 3 触发 limit 立即 return
     expect(r.metrics?.llmTurns).toBe(4);
@@ -512,7 +522,7 @@ describe('runTurn', () => {
     const tmpCwd = await import('node:fs/promises').then((m) => m.mkdtemp('/tmp/agent-loop-'));
     tmpCwds.push(tmpCwd);
     await import('node:fs/promises').then((m) => m.writeFile(`${tmpCwd}/a.txt`, 'x'));
-    const r = await runTurn({
+    const r = await runTurn(baseRunTurnArgs({
       messages: [{ role: 'user', content: 'x' }],
       tools: [readFileTool],
       cwd: tmpCwd,
@@ -524,7 +534,7 @@ describe('runTurn', () => {
       model: 'fake',
       maxContextTokens: 120000,
       limits: { maxToolCalls: 2 },
-    });
+    }));
     expect(r.finishReason).toBe('limit');
     // L3 触发时 toolCalls 已 ≥ maxToolCalls(2)
     expect(r.metrics?.toolCalls).toBeGreaterThanOrEqual(2);
@@ -548,7 +558,7 @@ describe('runTurn', () => {
     await import('node:fs/promises').then((m) => m.writeFile(`${tmpCwd}/a.txt`, 'x'));
     const big = 'x'.repeat(5000);
     const events: unknown[] = [];
-    const r = await runTurn({
+    const r = await runTurn(baseRunTurnArgs({
       messages: [
         { role: 'system', content: 'sys' },
         { role: 'user', content: big },
@@ -569,7 +579,7 @@ describe('runTurn', () => {
       client: fakeClient,
       model: 'fake',
       maxContextTokens: 1000, // 0.7 * 1000 = 700
-    });
+    }));
     // 期望看到 tool_call_end 之后出现 phase=compressing(L1 mid-turn 路径)
     const tcEndIdx = events.findIndex((e) => (e as { type: string }).type === 'tool_call_end');
     expect(tcEndIdx).toBeGreaterThanOrEqual(0);
@@ -602,7 +612,7 @@ describe('runTurn', () => {
       ]),
     );
     const events: unknown[] = [];
-    const r = await runTurn({
+    const r = await runTurn(baseRunTurnArgs({
       messages: msgs,
       tools: [],
       cwd: '/tmp',
@@ -613,7 +623,7 @@ describe('runTurn', () => {
       client: fakeClient,
       model: 'fake',
       maxContextTokens: 1000, // 0.85 * 1000 = 850
-    });
+    }));
     const hotCutText = events.find(
       (e) => (e as { type: string }).type === 'text_delta' && typeof (e as { delta?: string }).delta === 'string' && (e as { delta: string }).delta.includes('[hot-cut:'),
     );
@@ -636,7 +646,7 @@ describe('runTurn', () => {
     fakeStream.mockReturnValueOnce(
       asyncIterFromArray([{ type: 'text_delta', delta: 'ok' }, { type: 'done', finishReason: 'stop' }]),
     );
-    await runTurn({
+    await runTurn(baseRunTurnArgs({
       messages: msgs,
       tools: [],
       cwd: '/tmp',
@@ -647,7 +657,7 @@ describe('runTurn', () => {
       client: fakeClient,
       model: 'fake',
       maxContextTokens: 1000,
-    });
+    }));
     // 不抛错 + system 内容应该被传递(loop 内部会调 LLM,LLM mock 不读 system,只要不抛就行)
   });
 
@@ -666,7 +676,7 @@ describe('runTurn', () => {
     fakeStream.mockReturnValueOnce(
       asyncIterFromArray([{ type: 'text_delta', delta: 'ok' }, { type: 'done', finishReason: 'stop' }]),
     );
-    await runTurn({
+    await runTurn(baseRunTurnArgs({
       messages: msgs,
       tools: [],
       cwd: '/tmp',
@@ -677,7 +687,7 @@ describe('runTurn', () => {
       client: fakeClient,
       model: 'fake',
       maxContextTokens: 1000,
-    });
+    }));
     // 不抛错
   });
 
@@ -697,7 +707,7 @@ describe('runTurn', () => {
     const tmpCwd = await import('node:fs/promises').then((m) => m.mkdtemp('/tmp/agent-loop-'));
     tmpCwds.push(tmpCwd);
     await import('node:fs/promises').then((m) => m.writeFile(`${tmpCwd}/a.txt`, 'x'));
-    const r = await runTurn({
+    const r = await runTurn(baseRunTurnArgs({
       messages: [{ role: 'user', content: 'x' }],
       tools: [readFileTool],
       cwd: tmpCwd,
@@ -708,7 +718,7 @@ describe('runTurn', () => {
       client: fakeClient,
       model: 'fake',
       maxContextTokens: 120000,
-    });
+    }));
     expect(r.metrics).toBeDefined();
     expect(r.metrics?.llmTurns).toBe(2);
     expect(r.metrics?.toolCalls).toBe(1);
@@ -732,7 +742,7 @@ describe('runTurn', () => {
     const tmpCwd = await import('node:fs/promises').then((m) => m.mkdtemp('/tmp/agent-loop-'));
     tmpCwds.push(tmpCwd);
     await import('node:fs/promises').then((m) => m.writeFile(`${tmpCwd}/a.txt`, 'x'));
-    const r = await runTurn({
+    const r = await runTurn(baseRunTurnArgs({
       messages: [{ role: 'user', content: 'x' }],
       tools: [readFileTool],
       cwd: tmpCwd,
@@ -744,7 +754,7 @@ describe('runTurn', () => {
       model: 'fake',
       maxContextTokens: 120000,
       limits: { maxTurns: 2 },
-    });
+    }));
     expect(r.finishReason).toBe('limit');
     expect(r.metrics).toBeDefined();
     // maxTurns=2:llmTurns=1,2 OK;第 3 轮 llmTurns=3 > 2 触发 limit
@@ -767,7 +777,7 @@ describe('runTurn', () => {
       { role: 'system', content: 'sys' },
       { role: 'user', content: big },
     ];
-    const r = await runTurn({
+    const r = await runTurn(baseRunTurnArgs({
       messages: initialMsgs,
       tools: [],
       cwd: '/tmp',
@@ -778,7 +788,7 @@ describe('runTurn', () => {
       client: fakeClient,
       model: 'fake',
       maxContextTokens: 1000, // 0.7 * 1000 = 700,5000 char 必超
-    });
+    }));
     // runTurn 返回的 messages 至少含 system + user(可能多了 summary / 兜底标记)
     // 关键断言:system + user 都还在,没被清空
     expect(r.messages.find((m) => m.role === 'system')?.content).toBe('sys');
@@ -829,7 +839,7 @@ describe('runTurn', () => {
     const startTimes = new Map<string, number>();
     const endTimes = new Map<string, number>();
 
-    const r = await runTurn({
+    const r = await runTurn(baseRunTurnArgs({
       messages: [{ role: 'user', content: '读 a b c' }],
       tools: [readFileTool],
       cwd: tmpCwd,
@@ -843,7 +853,7 @@ describe('runTurn', () => {
       client: fakeClient,
       model: 'fake',
       maxContextTokens: 120000,
-    });
+    }));
 
     // 1. 3 个 tool_call_end 都到达
     expect(endTimes.size).toBe(3);
