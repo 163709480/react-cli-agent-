@@ -787,4 +787,86 @@ describe('runTurn', () => {
     expect(finalUser).toBeDefined();
     expect(r.finishReason).toBe('stop');
   });
+
+  it('3 个 read_file 同一轮并发执行:messages 顺序保持,3 个 start 都在一个 100ms 窗口内', async () => {
+    // 准备 3 个 tmp 文件
+    const fs = await import('node:fs/promises');
+    const tmpCwd = await fs.mkdtemp('/tmp/agent-par-');
+    tmpCwds.push(tmpCwd);
+    await Promise.all([
+      fs.writeFile(`${tmpCwd}/a.txt`, 'AAA'),
+      fs.writeFile(`${tmpCwd}/b.txt`, 'BBB'),
+      fs.writeFile(`${tmpCwd}/c.txt`, 'CCC'),
+    ]);
+
+    // 模型一次返回 3 个 read_file
+    fakeStream.mockReturnValueOnce(
+      asyncIterFromArray([
+        {
+          type: 'tool_call_start',
+          toolCall: { id: 'c1', type: 'function', function: { name: 'read_file', arguments: '{"path":"a.txt"}' } },
+        },
+        {
+          type: 'tool_call_start',
+          toolCall: { id: 'c2', type: 'function', function: { name: 'read_file', arguments: '{"path":"b.txt"}' } },
+        },
+        {
+          type: 'tool_call_start',
+          toolCall: { id: 'c3', type: 'function', function: { name: 'read_file', arguments: '{"path":"c.txt"}' } },
+        },
+        { type: 'done', finishReason: 'tool_calls' as never },
+      ]),
+    );
+    // 第二轮模型直接收尾
+    fakeStream.mockReturnValueOnce(
+      asyncIterFromArray([
+        { type: 'text_delta', delta: 'all read' },
+        { type: 'done', finishReason: 'stop' },
+      ]),
+    );
+
+    // 记录每个 tool_call_start/end 的时间戳,做"相对"并发断言
+    const startTimes = new Map<string, number>();
+    const endTimes = new Map<string, number>();
+
+    const r = await runTurn({
+      messages: [{ role: 'user', content: '读 a b c' }],
+      tools: [readFileTool],
+      cwd: tmpCwd,
+      yolo: false,
+      onEvent: (e) => {
+        if (e.type === 'tool_call_start') startTimes.set(e.toolCall.id, Date.now());
+        if (e.type === 'tool_call_end') endTimes.set(e.toolCallId, Date.now());
+      },
+      onConfirm: async () => true,
+      signal: new AbortController().signal,
+      client: fakeClient,
+      model: 'fake',
+      maxContextTokens: 120000,
+    });
+
+    // 1. 3 个 tool_call_end 都到达
+    expect(endTimes.size).toBe(3);
+    expect(endTimes.has('c1')).toBe(true);
+    expect(endTimes.has('c2')).toBe(true);
+    expect(endTimes.has('c3')).toBe(true);
+
+    // 2. 3 个 start 都在一个 100ms 窗口内 → 证明并发触发
+    // (在 CI 上 100ms 是个安全的容差;如果想更严格可以改 50ms)
+    const starts = ['c1', 'c2', 'c3'].map((id) => startTimes.get(id)!);
+    const window = Math.max(...starts) - Math.min(...starts);
+    expect(window).toBeLessThan(100);
+
+    // 3. messages 中 tool 消息顺序保持(按 c1, c2, c3)
+    const toolMsgs = r.messages.filter((m) => m.role === 'tool');
+    expect(toolMsgs.map((m) => m.tool_call_id)).toEqual(['c1', 'c2', 'c3']);
+    // 内容分别对应 AAA/BBB/CCC
+    expect(toolMsgs[0].content).toContain('AAA');
+    expect(toolMsgs[1].content).toContain('BBB');
+    expect(toolMsgs[2].content).toContain('CCC');
+
+    // 4. metrics 反映 1 个 tool batch(1 次 LLM, 1 个 tool batch,3 个 tool call)
+    expect(r.metrics?.llmTurns).toBe(2); // 第 1 轮 tool,第 2 轮收尾
+    expect(r.metrics?.toolCalls).toBe(3);
+  });
 });
