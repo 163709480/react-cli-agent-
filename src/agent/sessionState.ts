@@ -6,6 +6,8 @@ export interface TodoItem {
 export interface SessionState {
   readonly todos: TodoItem[];
   setTodos(next: TodoItem[]): void;
+  /** 清空当前 session 的内部状态(todos 等),不重新触发 onChange 之外的副作用 */
+  reset(): void;
   onChange?: (todos: TodoItem[]) => void;
 }
 
@@ -15,6 +17,11 @@ export function createSessionState(): SessionState {
     get todos() { return todos; },
     setTodos(next) {
       todos = next;
+      const cb = this.onChange;
+      cb?.(todos);
+    },
+    reset() {
+      todos = [];
       const cb = this.onChange;
       cb?.(todos);
     },

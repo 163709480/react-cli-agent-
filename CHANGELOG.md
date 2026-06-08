@@ -3,6 +3,28 @@
 All notable changes to this project will be documented in this file.
 Format: roughly [Keep a Changelog](https://keepachangelog.com/).
 
+## [0.2.1] - 2026-06-08
+
+### Security
+- **修复 symlink sandbox 逃逸** —— `resolveWithinCwd` 在路径不存在时只对最终路径 realpath 失败回退字面路径,被 `cwd/link -> /outside; write link/new.md` 绕过。改为逐级 realpath 最近祖先再拼回尾部,堵住多级 symlink 链。新增 3 个测试覆盖(直接 symlink 目录、多级链)。`src/safety/sandbox.ts`。
+
+### Fixed
+- `agentVersion` 不再硬编码 `'0.1.0'`,由 CLI 从 `package.json` 读取并通过 `App` props 注入(`src/cli.tsx` + `src/app.tsx`)。审计事件里现在能反映真实包版本。
+- CLI help 环境变量从 `AGENT_PROVIDER / AGENT_MODEL / AGENT_API_KEY / AGENT_BASE_URL`(旧且不准确)改为 `OPENAI_API_KEY / OPENAI_BASE_URL / OPENAI_MODEL / AGENT_PROVIDER`,与 `loadConfig()` 实际读取的 env 一致。
+- `--allow-mutations` help 描述从"允许修改文件"改为"允许 HTTP POST 等副作用请求(写文件不受此选项控制)"。
+- README test badge `142 passed` → `183 passed`;正文"123 个测试,21 个文件" → "183 个测试,30 个文件"。
+- SECURITY.md `Supported versions`: `0.1.x` (current) → `0.2.x` (current),`0.1.x` 移入 unsupported 列。
+- `docs/PROJECT.md` 两处 summarizer 过期描述(原"占位实现")更新为"真 LLM 摘要 + fallback"。
+
+### Added
+- **固定 TUI 布局 MVP** —— `useStdout` 拿终端行数 + 监听 resize,给 conversation viewport 算固定 `height`,多轮对话不再把 input 推到屏幕外。`MessageList` 新增 `maxMessages` prop,超出尾部裁剪,顶部显示 `... N earlier messages ...`。`src/components/MessageList.tsx` + `src/app.tsx`。
+- **LLM 前缀指纹观测** —— 每次 LLM call 前 auditSink 发出 `llm_call` 事件,带 `systemPromptHash / toolsSchemaHash / messagePrefixHash / approxPromptTokens`(16 位 hex,稳定键排序)。便于观察 provider 侧 prompt cache 命中率。`src/agent/loop.ts`。
+- **内置 slash command** —— `src/agent/commands.ts` 新模块 + `parseBuiltinCommand()` + `BUILTIN_COMMAND_LIST`。支持 `/compact /status /clear /reset /help`,未知 `/xxx` 不进 LLM,直接显示错误。
+- **手动 `/compact` + 阶段进度条** —— `compactMessages()` 包装 + 5 阶段进度事件(`estimating 10% → loading_instructions 25% → summarizing 40% → rebuilding 75% → done 100%`)。fallback 时显示 `fallback used`,消息太少显示 `nothing to compact`。`src/agent/context.ts` + `src/components/CompactProgressBar.tsx` + `src/app.tsx`。
+- **快捷配置入口** —— `react-cli-agent config [--provider X] [--show]`,持久化到 `~/.agent/config.json`(权限 0600),不持久化 API key(仍走 env)。Provider 三个 preset:`ollama` (本地,占位 key) / `deepseek` (在线) / `minimax` (在线,带 notes 提示核对文档)。`src/llm/providers.ts` + `src/agent/userConfig.ts` + `src/cli-config.ts`。
+- **SessionState.reset()** —— `/reset` 内部使用,清空 todos 并触发 onChange。
+- 新测试 32 个(`sandbox` 3、`MessageList` 5、`loop` 2(更新+新)、`commands` 10、`context.compactMessages` 4、`providers` 4、`userConfig` 6),合计 180 → 212。
+
 ## [0.4.0] - 2026-06-06
 
 ### Added

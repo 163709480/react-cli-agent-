@@ -394,11 +394,13 @@ describe('runTurn', () => {
     // 期望事件类型序列(简化断言)
     const types = sink.events.map((e) => e.type);
     expect(types).toEqual([
+      'llm_call',             // 缓存命中率基线观测:第一轮 LLM call 前缀指纹
       'phase',                // thinking (第一轮开始)
       'phase',                // executing
       'tool_call_start',
       'llm_usage',
       'tool_call_end',
+      'llm_call',             // 第二轮 LLM call 前缀指纹
       'phase',                // thinking (第二轮)
       'text_delta',
       'llm_usage',
@@ -412,6 +414,49 @@ describe('runTurn', () => {
     for (let i = 1; i < sink.events.length; i++) {
       expect(sink.events[i].prevHash).toBe(sink.events[i - 1].hash);
     }
+  });
+
+  it('llm_call 事件携带前缀指纹 (P0.4 缓存命中率基线)', async () => {
+    // 两轮 LLM 调用: 第一次产出 tool_call, 第二次纯文本回复
+    fakeStream
+      .mockReturnValueOnce(asyncIterFromArray([
+        { type: 'tool_call_start', toolCall: { id: 'tc1', type: 'function', function: { name: 'read_file', arguments: '{"path":"x"}' } } },
+        { type: 'done', finishReason: 'stop' },
+      ]))
+      .mockReturnValueOnce(asyncIterFromArray([
+        { type: 'text_delta', delta: 'done' },
+        { type: 'done', finishReason: 'stop' },
+      ]));
+    const tmpCwd = await import('node:fs/promises').then((m) => m.mkdtemp('/tmp/agent-loop-hash-'));
+    tmpCwds.push(tmpCwd);
+    const sink = new InMemorySink('sid-hash', 1);
+    await runTurn(baseRunTurnArgs({
+      messages: [{ role: 'user', content: 'go' }],
+      tools: [readFileTool],
+      cwd: tmpCwd,
+      yolo: false,
+      onEvent: () => {},
+      onConfirm: async () => true,
+      signal: new AbortController().signal,
+      client: fakeClient,
+      model: 'fake',
+      maxContextTokens: 120000,
+      auditSink: sink as unknown as AuditSink,
+    }));
+    const llmCalls = sink.events.filter((e) => e.type === 'llm_call');
+    expect(llmCalls.length).toBe(2);
+    // 字段都在
+    for (const ev of llmCalls) {
+      expect(typeof ev.systemPromptHash).toBe('string');
+      expect((ev.systemPromptHash as string)).toMatch(/^[0-9a-f]{16}$/);
+      expect(typeof ev.toolsSchemaHash).toBe('string');
+      expect((ev.toolsSchemaHash as string)).toMatch(/^[0-9a-f]{16}$/);
+      expect(typeof ev.messagePrefixHash).toBe('string');
+      expect((ev.messagePrefixHash as string)).toMatch(/^[0-9a-f]{16}$/);
+      expect(typeof ev.approxPromptTokens).toBe('number');
+    }
+    // 同一 session 内 toolsSchemaHash 必须稳定(工具列表未变)
+    expect(llmCalls[0].toolsSchemaHash).toBe(llmCalls[1].toolsSchemaHash);
   });
 
   it('auditSink=undefined 不抛错(回归覆盖)', async () => {

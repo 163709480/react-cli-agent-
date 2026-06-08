@@ -5,6 +5,7 @@ import { partitionToolCalls } from './partition.js';
 import { fallbackSummary, loadCompactInstructions, summarizeConversation } from './summarizer.js';
 import { hotCut } from './hotCut.js';
 import { SandboxError, ToolError } from '../safety/errors.js';
+import { createHash } from 'node:crypto';
 import type {
   Message,
   RunTurnInput,
@@ -31,6 +32,47 @@ function errorAsToolResult(toolName: string, err: unknown): string {
 }
 
 const RETRY_DELAYS = [500, 2000, 8000];
+
+/**
+ * 稳定哈希:对任何可序列化值生成短哈希(hex 前 16 位)。
+ * 用于 audit/debug 观察 system prompt / tools schema / message prefix
+ * 的稳定性,作为 provider 侧 prompt cache 命中率的代理指标。
+ *
+ * 注意:不是加密用途,只是 fingerprint。
+ */
+function hashStable(value: unknown): string {
+  return createHash('sha256')
+    .update(stableStringify(value))
+    .digest('hex')
+    .slice(0, 16);
+}
+
+function stableStringify(value: unknown): string {
+  // 不依赖 JSON.stringify 的 key 顺序:对象按 key 排序
+  if (value === null || typeof value !== 'object') return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableStringify).join(',')}]`;
+  const obj = value as Record<string, unknown>;
+  const keys = Object.keys(obj).sort();
+  return `{${keys.map((k) => `${JSON.stringify(k)}:${stableStringify(obj[k])}`).join(',')}}`;
+}
+
+function hashMessageContent(content: string | null | undefined): string {
+  if (!content) return hashStable('');
+  return hashStable(content);
+}
+
+/**
+ * 计算"消息前缀"的指纹 — 只取 role + 长度 + 头 200 字符,
+ * 用来检测"前缀漂移"(新工具/新 system prompt 插到了 system 后面)。
+ */
+function hashMessagePrefix(messages: Message[]): string {
+  const prefix = messages.slice(0, 3).map((m) => ({
+    role: m.role,
+    len: typeof m.content === 'string' ? m.content.length : 0,
+    head: typeof m.content === 'string' ? m.content.slice(0, 200) : '',
+  }));
+  return hashStable(prefix);
+}
 
 async function withRetry<T>(fn: () => Promise<T>, signal: AbortSignal, max = 3): Promise<T> {
   let lastErr: unknown;
@@ -145,6 +187,20 @@ export async function runTurn(input: RunTurnInput): Promise<RunTurnResult> {
         toolCalls.length = 0;
         sawFinish = false;
         roundFinishReason = 'stop';
+        // 缓存命中率基线观测:在 LLM call 之前把"前缀指纹"打进 audit log
+        if (auditSink) {
+          const systemPromptHash = hashMessageContent(messages[0]?.role === 'system' ? messages[0].content : null);
+          const toolsSchemaHash = hashStable(descriptors);
+          const messagePrefixHash = hashMessagePrefix(messages);
+          auditSink.emit({
+            type: 'llm_call',
+            callIndex: usageCallIndex,
+            systemPromptHash,
+            toolsSchemaHash,
+            messagePrefixHash,
+            approxPromptTokens: estimateTokens(messages),
+          });
+        }
         emit({ type: 'phase', phase: 'thinking' });
         const gen = chatCompletionStream({ client, model, messages, tools: descriptors, signal });
         for await (const ev of gen) {

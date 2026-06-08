@@ -66,3 +66,82 @@ export async function compress(
   result.push(...tail);
   return result;
 }
+
+/**
+ * 手动/可观测压缩包装:在 compress() 的关键阶段发出 progress 事件,
+ * 给 UI 提供阶段式进度条。
+ *
+ * 设计目标:
+ * - 阶段粒度:estimating / loading_instructions / summarizing /
+ *   rebuilding / done
+ * - 失败时返回原 messages 并标 `fallback=true`,让 UI 知道走了 fallback
+ * - 不引入新依赖,纯回调形式,便于测试
+ */
+export type CompactProgress =
+  | { phase: 'estimating'; percent: 10; beforeTokens: number }
+  | { phase: 'loading_instructions'; percent: 25 }
+  | { phase: 'summarizing'; percent: 40 }
+  | { phase: 'rebuilding'; percent: 75 }
+  | { phase: 'done'; percent: 100; beforeTokens: number; afterTokens: number; fallback: boolean }
+  | { phase: 'nothing_to_compact'; percent: 100; messageCount: number }
+  | { phase: 'error'; percent: 100; error: string };
+
+export interface CompactOptions {
+  /** LLM 摘要函数(由 caller 注入,失败时 caller 可决定 fallback) */
+  summarizer: (text: string) => Promise<string>;
+  /** 加载 compact instructions 的函数(若传空,跳过该阶段) */
+  loadInstructions?: () => Promise<string>;
+  /** 进度回调,UI 端订阅 */
+  onProgress?: (ev: CompactProgress) => void;
+  /** 当 summarizer 抛错时,caller 提供的兜底摘要(可为 fallbackSummary) */
+  fallback?: (text: string) => string;
+}
+
+/**
+ * 跑一次手动压缩,带阶段进度。返回:
+ *   { messages, fallback, nothing }
+ *   - messages:压缩后的消息数组(若 nothing 则等于原 messages 拷贝)
+ *   - fallback:是否走了 fallback 路径
+ *   - nothing:消息太少,没有可压缩的
+ */
+export async function compactMessages(
+  messages: Message[],
+  opts: CompactOptions,
+): Promise<{ messages: Message[]; fallback: boolean; nothing: boolean }> {
+  const before = estimateTokens(messages);
+  opts.onProgress?.({ phase: 'estimating', percent: 10, beforeTokens: before });
+
+  // 消息太少 — 没有任何中间消息可折
+  if (messages.length <= 7) {
+    opts.onProgress?.({ phase: 'nothing_to_compact', percent: 100, messageCount: messages.length });
+    return { messages: [...messages], fallback: false, nothing: true };
+  }
+
+  if (opts.loadInstructions) {
+    opts.onProgress?.({ phase: 'loading_instructions', percent: 25 });
+    await opts.loadInstructions();
+  } else {
+    opts.onProgress?.({ phase: 'loading_instructions', percent: 25 });
+  }
+
+  opts.onProgress?.({ phase: 'summarizing', percent: 40 });
+
+  // 真正的 compress + 失败 fallback
+  let fallbackUsed = false;
+  const safeMessages: Message[] = await (async () => {
+    try {
+      return await compress(messages, opts.summarizer);
+    } catch (e) {
+      if (opts.fallback) {
+        fallbackUsed = true;
+        return await compress(messages, async (t) => opts.fallback!(t));
+      }
+      throw e;
+    }
+  })();
+
+  opts.onProgress?.({ phase: 'rebuilding', percent: 75 });
+  const after = estimateTokens(safeMessages);
+  opts.onProgress?.({ phase: 'done', percent: 100, beforeTokens: before, afterTokens: after, fallback: fallbackUsed });
+  return { messages: safeMessages, fallback: fallbackUsed, nothing: false };
+}

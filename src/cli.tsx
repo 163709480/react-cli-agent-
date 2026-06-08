@@ -6,6 +6,7 @@ import { loadConfig } from './config.js';
 import { createRequire } from 'node:module';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
+import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
 const require = createRequire(import.meta.url);
@@ -101,6 +102,18 @@ function parseArgs(argv: string[]): Args {
   return args;
 }
 
+// 早期拦截: --version / --help / config 子命令(不进入 TUI)
+{
+  const idx = process.argv.indexOf('config');
+  if (idx > 0) {
+    // 透传 config 之后的参数(以及其后的)
+    const rest = process.argv.slice(idx + 1);
+    const cliConfigPath = path.resolve(__dirname, 'cli-config.js');
+    const r = spawnSync(process.execPath, [cliConfigPath, ...rest], { stdio: 'inherit' });
+    process.exit(r.status ?? (r.error ? 1 : 0));
+  }
+}
+
 // 早期拦截: --version / --help(不需要加载 .env / 启动 TUI)
 for (const a of process.argv.slice(2)) {
   if (a === '--version' || a === '-v') {
@@ -117,7 +130,7 @@ for (const a of process.argv.slice(2)) {
         '  --version, -v              输出版本号并退出\n' +
         '  --help, -h                 打印本帮助并退出\n' +
         '  --yolo                     跳过工具调用的安全审批(谨慎使用)\n' +
-        '  --allow-mutations          允许修改文件(默认只读)\n' +
+        '  --allow-mutations          允许 HTTP POST 等副作用请求(写文件不受此选项控制)\n' +
         '  --cwd <path>               设置工作目录\n' +
         '  --provider <name>          指定 LLM provider(覆盖 env)\n' +
         '  --max-turns <n>            单次会话最大 LLM turns(默认 12)\n' +
@@ -126,10 +139,10 @@ for (const a of process.argv.slice(2)) {
         '  --no-audit-log             关闭审计日志\n' +
         '\n' +
         '环境变量:\n' +
-        '  AGENT_PROVIDER             LLM provider(openai/anthropic/mock/...)\n' +
-        '  AGENT_MODEL                模型名\n' +
-        '  AGENT_API_KEY              provider API key\n' +
-        '  AGENT_BASE_URL             OpenAI 兼容 base URL\n' +
+        '  OPENAI_API_KEY             provider API key\n' +
+        '  OPENAI_BASE_URL            OpenAI 兼容 base URL\n' +
+        '  OPENAI_MODEL               模型名(覆盖 provider preset 默认)\n' +
+        '  AGENT_PROVIDER             LLM provider preset(覆盖 baseUrl/model)\n' +
         '  AGENT_MAX_CONTEXT_TOKENS   上下文窗口 token 上限\n' +
         '  AGENT_MAX_TURNS            覆盖默认 max-turns\n' +
         '  AGENT_MAX_TOOL_CALLS       覆盖默认 max-tool-calls\n' +
@@ -139,6 +152,8 @@ for (const a of process.argv.slice(2)) {
         '  react-cli-agent "重构 src/foo.ts"          headless 模式,直接跑完\n' +
         '  react-cli-agent --max-turns 5            限制 5 轮 LLM 调用\n' +
         '  react-cli-agent --audit-log ./audit.jsonl  写到指定路径\n' +
+        '  react-cli-agent config --provider ollama  切到本地 Ollama\n' +
+        '  react-cli-agent config --show            查看持久化配置(不含 key)\n' +
         '\n',
     );
     process.exit(0);
@@ -179,6 +194,7 @@ import('node:fs').then(async ({ existsSync, readFileSync }) => {
       config={config}
       auditMode={args.auditMode}
       auditPath={args.auditPath}
+      agentVersion={VERSION}
     />,
   );
 });

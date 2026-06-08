@@ -185,7 +185,7 @@ runTurn                                          ← src/agent/loop.ts
 - 保留 system 消息
 - 保留最近 6 条
 - 中间折成一条 `[Summary of earlier conversation]\n...` 消息(role: user,让 LLM 当作"系统提示"读)
-- summarizer 是 loop 注入的 LLM 调用(目前实现是 `text.slice(0, 200) + '...'` 占位,真实场景应换成 LLM 摘要调用)
+- summarizer 是 loop 注入的 LLM 调用(由 `loop.ts` 的 summarizer prompt 驱动,失败时回退到 `fallbackSummary()` 的本地截断)
 
 **局限**:仅在轮次开始时压缩,不在每条 tool result 后增量压缩。
 
@@ -331,7 +331,7 @@ runTurn                                          ← src/agent/loop.ts
 ## 6. 已知限制与未做的事
 
 - **未持久化**:进程退出即丢,跨 session 不记忆。
-- **summarizer 是占位**:`compress()` 里的 `text.slice(0, 200) + '...'` 不是真 LLM 摘要,真用需要换成 `await chatCompletion({...summarize prompt...})`。
+- **summarizer 已升级为真 LLM 摘要**:`summarizeConversation()` 走 chat completion,失败时回退到 `fallbackSummary()` 的本地截断。
 - **压缩时机粗**:只在 runTurn 开头压一次,不在 tool result 增量后压。
 - **无 shell 工具**:刻意不提供,跟"路径/后缀沙箱"配对的安全策略。
 - **Ink 需 TTY**:`script -q /dev/null` 这种伪 TTY 在本环境下 Ink 报 `Raw mode is not supported`,真实终端可用,headless 模式(`-- "prompt"`)可绕开。

@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useRef, useCallback } from 'react';
-import { Box, Text, useApp, useInput } from 'ink';
+import { Box, Text, useApp, useInput, useStdout } from 'ink';
 import path from 'node:path';
 import os from 'node:os';
 import { MessageList, type DisplayMessage } from './components/MessageList.js';
@@ -11,9 +11,13 @@ import { HeadStatus, type LoopPhase } from './components/HeadStatus.js';
 import { Welcome } from './components/Welcome.js';
 import { AskUserDialog } from './components/AskUserDialog.js';
 import { TodoList } from './components/TodoList.js';
+import { CompactProgressBar } from './components/CompactProgressBar.js';
 import { runTurn } from './agent/loop.js';
 import { buildSystemPrompt } from './agent/systemPrompt.js';
 import { createSessionState, type TodoItem } from './agent/sessionState.js';
+import { parseBuiltinCommand, BUILTIN_COMMAND_LIST } from './agent/commands.js';
+import { compactMessages, type CompactProgress } from './agent/context.js';
+import { fallbackSummary, loadCompactInstructions, summarizeConversation } from './agent/summarizer.js';
 import { readFileTool } from './tools/read_file.js';
 import { writeFileTool } from './tools/write_file.js';
 import { editFileTool } from './tools/edit_file.js';
@@ -53,6 +57,7 @@ interface AppProps {
   config?: Config;
   auditMode: 'default' | 'path' | 'off';
   auditPath?: string;
+  agentVersion: string;
 }
 
 const TOOLS: ToolDef[] = [
@@ -60,7 +65,7 @@ const TOOLS: ToolDef[] = [
   todoWriteTool, askUserQuestionTool,
 ];
 
-export function App({ yolo, allowMutations, cwd, headlessPrompt, config: providedConfig, auditMode, auditPath }: AppProps) {
+export function App({ yolo, allowMutations, cwd, headlessPrompt, config: providedConfig, auditMode, auditPath, agentVersion }: AppProps) {
   const { exit } = useApp();
   const [messages, setMessages] = useState<Message[]>([]);
   const [display, setDisplay] = useState<DisplayMessage[]>([]);
@@ -74,6 +79,8 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
   const [phaseToolName, setPhaseToolName] = useState<string | undefined>(undefined);
   const [currentTokens, setCurrentTokens] = useState<{ promptTokens: number; completionTokens: number } | undefined>(undefined);
   const [compressStatus, setCompressStatus] = useState<{ before: number; after?: number; startedAt: number } | null>(null);
+  // P0.6: 手动 /compact 进度状态(可观测的阶段事件)
+  const [compactProgress, setCompactProgress] = useState<CompactProgress | null>(null);
 
   const clientRef = useRef<OpenAI | null>(null);
   const abortRef = useRef<AbortController | null>(null);
@@ -87,6 +94,32 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
   const [todos, setTodos] = useState<TodoItem[]>([]);
   const [pendingQuestion, setPendingQuestion] = useState<AskUserRequest | null>(null);
   const pendingAskResolveRef = useRef<((a: AskUserAnswer | '__canceled__') => void) | null>(null);
+
+  // 终端高度 — 用来给 conversation viewport 算固定高度,避免长对话把 prompt 推到屏幕外
+  const { stdout } = useStdout();
+  const [terminalRows, setTerminalRows] = useState<number>(stdout?.rows ?? 24);
+  useEffect(() => {
+    if (!stdout) return;
+    const onResize = () => setTerminalRows(stdout.rows ?? 24);
+    stdout.on('resize', onResize);
+    onResize();
+    return () => { stdout.off('resize', onResize); };
+  }, [stdout]);
+
+  // 非消息区固定行数预算:
+  //   HeadStatus ≈ 2 行,ActiveToolLine ≈ 2 行,Confirm/Question 弹窗 ≈ 5 行,
+  //   InputBox+margin ≈ 3 行,padding ≈ 2 行,TodoList 按 todos 数动态追加。
+  const FIXED_NON_MSG = 14;
+  // Welcome 只在首屏显示若干行,首屏后空出空间
+  const todoRows = todos.length > 0 ? todos.length + 3 : 0;
+  const welcomeRows = !started && display.length === 0 ? 6 : 0;
+  const viewportRows = Math.max(
+    3,
+    terminalRows - FIXED_NON_MSG - todoRows - welcomeRows,
+  );
+  // 每条消息估 3 行(marginY 上下 + 1 行内容);长回复会占更多行,
+  // 这里只控制"消息条数",内容超出靠 MessageList 内部 overflow="hidden" 裁剪
+  const maxMessages = Math.max(2, Math.floor(viewportRows / 3));
 
   useEffect(() => {
     sessionState.onChange = (next) => setTodos(next);
@@ -131,7 +164,7 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
         yolo,
         allowMutations,
         node: process.version,
-        agentVersion: '0.1.0',
+        agentVersion,
       });
       // 把 user 的第一条 prompt 也作为审计事件(后续 turn 里通过 auditSink 透传)
       if (headlessPrompt) {
@@ -177,8 +210,126 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
     }
   });
 
+  /**
+   * 执行一个内置 slash command(P0.5)。
+   * 不会调用 chatCompletionStream,只操作本地 state / display。
+   */
+  async function executeBuiltinCommand(cmd: ReturnType<typeof parseBuiltinCommand>) {
+    if (!cmd) return;
+    const id = uuid();
+    const echo: DisplayMessage = { id, role: 'user', content: `/${cmd.type === 'unknown' ? cmd.name : cmd.type}` };
+    setDisplay((d) => [...d, echo]);
+
+    switch (cmd.type) {
+      case 'help': {
+        const lines = BUILTIN_COMMAND_LIST.map((c) => `  /${c.name.padEnd(8)} ${c.description}`).join('\n');
+        setDisplay((d) => [...d, { id: uuid(), role: 'assistant', content: `内置命令:\n${lines}` }]);
+        return;
+      }
+      case 'clear': {
+        // 清空显示,但保留真实 messages / audit log
+        setDisplay([]);
+        return;
+      }
+      case 'reset': {
+        // 清空 session 状态:下一轮会重新注入 system prompt
+        setMessages([]);
+        setDisplay([]);
+        sessionState.reset?.();
+        return;
+      }
+      case 'status': {
+        const cfg = config!;
+        const lines = [
+          `model:      ${cfg.openaiModel}`,
+          `provider:   ${cfg.providerName}`,
+          `baseUrl:    ${cfg.openaiBaseUrl}`,
+          `cwd:        ${cwd}`,
+          `messages:   ${messages.length}`,
+          `todos:      ${todos.length}`,
+          `agent ver:  ${agentVersion}`,
+        ].join('\n');
+        setDisplay((d) => [...d, { id: uuid(), role: 'assistant', content: lines }]);
+        return;
+      }
+      case 'compact': {
+        // 手动 /compact — 复用 summarizer + fallback,带阶段进度反馈
+        await runManualCompact();
+        return;
+      }
+      case 'unknown': {
+        setDisplay((d) => [...d, { id: uuid(), role: 'assistant', content: `未知命令: /${cmd.name}\n输入 /help 查看支持列表。` }]);
+        return;
+      }
+    }
+  }
+
+  /**
+   * P0.6 手动 /compact 实现:
+   * - 调 compactMessages(),通过 onProgress 推 compactProgress state
+   * - 完成后用 setMessages 替换 messages,效果与 runTurn 内自动压缩一致
+   * - 不调用 chatCompletionStream(summarizer 内部不算 — 它走的是和 runTurn 一样的 LLM)
+   */
+  async function runManualCompact() {
+    if (busy) {
+      setDisplay((d) => [...d, { id: uuid(), role: 'assistant', content: '[/compact] 当前正在执行,忽略' }]);
+      return;
+    }
+    if (messages.length === 0) {
+      setDisplay((d) => [...d, { id: uuid(), role: 'assistant', content: '[/compact] 没有消息可压缩' }]);
+      return;
+    }
+    setBusy(true);
+    const client = clientRef.current;
+    if (!client || !config) {
+      setBusy(false);
+      return;
+    }
+    try {
+      const r = await compactMessages(messages, {
+        summarizer: async (text) => {
+          const compactInstructions = await loadCompactInstructions(cwd);
+          return await summarizeConversation({
+            client, model: config.openaiModel, text,
+            signal: new AbortController().signal,
+            compactInstructions,
+            focus: 'Manual /compact triggered by user.',
+          });
+        },
+        fallback: (text) => fallbackSummary(text),
+        loadInstructions: async () => loadCompactInstructions(cwd),
+        onProgress: (ev) => setCompactProgress(ev),
+      });
+      if (r.nothing) {
+        // nothing_to_compact 阶段已经覆盖了"消息太少"
+        return;
+      }
+      if (r.fallback) {
+        setDisplay((d) => [...d, { id: uuid(), role: 'assistant', content: '[/compact] 完成(走 fallback,summarizer 失败)' }]);
+      } else {
+        setDisplay((d) => [...d, { id: uuid(), role: 'assistant', content: '[/compact] 完成' }]);
+      }
+      // 用压缩后的 messages 替换 state
+      setMessages(r.messages);
+    } catch (e) {
+      setDisplay((d) => [...d, { id: uuid(), role: 'assistant', content: `[/compact] 失败: ${(e as Error).message}` }]);
+      setCompactProgress({ phase: 'error', percent: 100, error: (e as Error).message });
+    } finally {
+      setBusy(false);
+      // 进度条保留 5 秒后清掉,给用户看完成状态
+      setTimeout(() => setCompactProgress(null), 5000);
+    }
+  }
+
   async function handleUserInput(text: string) {
     if (!clientRef.current || !config) return;
+    // 内置 slash command 分流(P0.5):
+    // 确定性本地操作不进 LLM,直接由 App 处理。
+    const builtin = parseBuiltinCommand(text);
+    if (builtin) {
+      await executeBuiltinCommand(builtin);
+      return;
+    }
     setStarted(true);
     const userMsg: Message = { role: 'user', content: text };
     const sysMsg: Message = { role: 'system', content: buildSystemPrompt() };
@@ -358,8 +509,8 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
         />
       )}
       <TodoList todos={todos} />
-      <Box flexDirection="column" flexGrow={1} overflowY="hidden">
-        <MessageList messages={display} />
+      <Box flexDirection="column" flexGrow={1} overflowY="hidden" overflowX="hidden" height={viewportRows}>
+        <MessageList messages={display} maxMessages={maxMessages} />
       </Box>
       {phase !== 'idle' && (
         <HeadStatus
@@ -370,6 +521,7 @@ export function App({ yolo, allowMutations, cwd, headlessPrompt, config: provide
           compressStatus={compressStatus ?? undefined}
         />
       )}
+      {compactProgress && <CompactProgressBar event={compactProgress} />}
       {activeTool && activeTool.state !== 'pending' && (
         <ActiveToolLine
           name={activeTool.name}

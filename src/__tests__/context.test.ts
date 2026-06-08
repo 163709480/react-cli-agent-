@@ -1,5 +1,5 @@
 import { describe, it, expect, vi } from 'vitest';
-import { estimateTokens, shouldCompress, compress } from '../agent/context.js';
+import { estimateTokens, shouldCompress, compress, compactMessages, type CompactProgress } from '../agent/context.js';
 import type { Message } from '../agent/types.js';
 
 describe('estimateTokens', () => {
@@ -129,5 +129,72 @@ describe('compress', () => {
     // 返回浅拷贝(避免 caller 突变影响,见 loop.ts 的 messages.length=0 模式)
     expect(out).not.toBe(msgs);
     expect(out).toEqual(msgs);
+  });
+});
+
+describe('compactMessages (P0.6 手动压缩 + 进度条)', () => {
+  function mkLongMessages(n: number): Message[] {
+    const out: Message[] = [{ role: 'system', content: 'sys' }];
+    for (let i = 0; i < n; i++) {
+      out.push({ role: i % 2 === 0 ? 'user' : 'assistant', content: `msg-${i}: ${'x'.repeat(50)}` });
+    }
+    return out;
+  }
+
+  it('消息数 ≤ 7 直接发 nothing_to_compact 并返回原 messages', async () => {
+    const events: CompactProgress[] = [];
+    const r = await compactMessages(
+      [{ role: 'user', content: 'a' }, { role: 'assistant', content: 'b' }],
+      {
+        summarizer: vi.fn(async () => 'sum'),
+        onProgress: (e) => events.push(e),
+      },
+    );
+    expect(r.nothing).toBe(true);
+    expect(r.fallback).toBe(false);
+    // 进度必须包含 estimating + nothing_to_compact
+    expect(events.some((e) => e.phase === 'estimating')).toBe(true);
+    expect(events.some((e) => e.phase === 'nothing_to_compact')).toBe(true);
+  });
+
+  it('正常路径:5 个阶段进度按顺序触发', async () => {
+    const events: CompactProgress[] = [];
+    const r = await compactMessages(mkLongMessages(10), {
+      summarizer: async () => '<<sum>>',
+      loadInstructions: async () => 'instr',
+      onProgress: (e) => events.push(e),
+    });
+    expect(r.nothing).toBe(false);
+    expect(r.fallback).toBe(false);
+    const phases = events.map((e) => e.phase);
+    expect(phases).toEqual([
+      'estimating',
+      'loading_instructions',
+      'summarizing',
+      'rebuilding',
+      'done',
+    ]);
+    const done = events.find((e) => e.phase === 'done') as Extract<CompactProgress, { phase: 'done' }>;
+    expect(done.fallback).toBe(false);
+    expect(done.afterTokens).toBeLessThanOrEqual(done.beforeTokens);
+  });
+
+  it('summarizer 失败 + 提供 fallback → 走 fallback,fallback=true', async () => {
+    const events: CompactProgress[] = [];
+    const r = await compactMessages(mkLongMessages(10), {
+      summarizer: async () => { throw new Error('llm down'); },
+      fallback: () => '<<LOCAL TRUNCATED>>',
+      onProgress: (e) => events.push(e),
+    });
+    expect(r.nothing).toBe(false);
+    expect(r.fallback).toBe(true);
+    const done = events.find((e) => e.phase === 'done') as Extract<CompactProgress, { phase: 'done' }>;
+    expect(done.fallback).toBe(true);
+  });
+
+  it('summarizer 失败 + 不提供 fallback → 抛错', async () => {
+    await expect(compactMessages(mkLongMessages(10), {
+      summarizer: async () => { throw new Error('llm down'); },
+    })).rejects.toThrow('llm down');
   });
 });

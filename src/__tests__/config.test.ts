@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -13,6 +13,7 @@ describe('loadConfig', () => {
     'AGENT_MAX_CONTEXT_TOKENS',
     'AGENT_MAX_TURNS',
     'AGENT_MAX_TOOL_CALLS',
+    'AGENT_HOME_DIR',
   ];
   let home: string;
 
@@ -22,11 +23,10 @@ describe('loadConfig', () => {
       delete process.env[k];
     }
     home = await fs.mkdtemp(path.join(os.tmpdir(), 'agent-config-home-'));
-    vi.spyOn(os, 'homedir').mockReturnValue(home);
+    process.env.AGENT_HOME_DIR = home;
   });
 
   afterEach(async () => {
-    vi.restoreAllMocks();
     await fs.rm(home, { recursive: true, force: true });
     for (const k of envKeys) {
       if (savedEnv[k] === undefined) delete process.env[k];
@@ -69,7 +69,7 @@ describe('loadConfig', () => {
   });
 
   it('传未知 provider 时抛错', () => {
-    expect(() => loadConfig({ provider: 'ollama' })).toThrow(/Unknown --provider/);
+    expect(() => loadConfig({ provider: 'nonexistent-xyz' })).toThrow(/Unknown --provider/);
   });
 
   it('传 provider 时,API key 仍从 env 读取', () => {

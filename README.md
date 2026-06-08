@@ -4,7 +4,7 @@
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520.0.0-brightgreen.svg)](https://nodejs.org)
-[![Tests](https://img.shields.io/badge/tests-142%20passed-brightgreen.svg)](#测试)
+[![Tests](https://img.shields.io/badge/tests-183%20passed-brightgreen.svg)](#测试)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5-blue.svg)](https://www.typescriptlang.org/)
 [![Audit: SHA-256 hash chain](https://img.shields.io/badge/audit-SHA--256%20chain-blueviolet)](#-审计日志)
 [![Dependencies: 10](https://img.shields.io/badge/runtime%20deps-10-success)](#-依赖)
@@ -143,7 +143,7 @@ npm run dev -- "列出 src/ 下所有 TypeScript 文件"
 | `--help`, `-h` | 打印帮助并退出 |
 | `--yolo` | 跳过 `confirm` 工具确认;`dangerous` 工具仍要求 `y` |
 | `--allow-mutations` | 允许 `http_fetch POST` 等副作用 |
-| `--provider <name>` | 选内置 provider 预设(目前 `deepseek`) |
+| `--provider <name>` | 选内置 provider 预设(`ollama` / `deepseek` / `minimax`) |
 | `--cwd <path>` | 覆盖工作目录 |
 | `--max-turns <n>` | 单次会话最大 LLM turns(默认 12) |
 | `--max-tool-calls <n>` | 单次会话最大 tool calls(默认 30) |
@@ -162,6 +162,16 @@ react-cli-agent "创建一个 README.md 描述这个项目"
 
 # HTTP 请求(危险,必确认)
 react-cli-agent --allow-mutations "POST https://api.example.com/webhook body {...}"
+
+# 切换到本地 Ollama
+react-cli-agent config --provider ollama
+
+# 切换到 DeepSeek / MiniMax(在线,需要 OPENAI_API_KEY)
+react-cli-agent config --provider deepseek
+react-cli-agent config --provider minimax
+
+# 查看当前持久化配置(不含 key)
+react-cli-agent config --show
 
 # 关闭审计
 react-cli-agent --no-audit-log "快速提问"
@@ -296,7 +306,7 @@ jq -c 'select(.type=="llm_usage") | {ts, callIndex, promptTokens, completionToke
 ## 🧪 测试
 
 ```bash
-npm test           # 123 个测试,21 个文件
+npm test           # 183 个测试,30 个文件
 npm run typecheck  # tsc --noEmit,必须干净
 ```
 
