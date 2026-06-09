@@ -29,6 +29,8 @@ describe('resolveProvider', () => {
     const p = resolveProvider('minimax');
     expect(p.kind).toBe('online');
     expect(p.requiresApiKey).toBe(true);
+    expect(p.baseUrl).toBe('https://api.minimaxi.com/v1');
+    expect(p.defaultModel).toBe('MiniMax-M3');
     // 标注了 notes 提示需要核对文档
     expect(p.notes).toBeTruthy();
   });

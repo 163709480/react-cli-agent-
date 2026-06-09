@@ -39,12 +39,14 @@ function describeTool(name: string): string {
 export function HeadStatus({ phase, phaseStartMs, tokens, toolName, compressStatus }: HeadStatusProps) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
+    // 切换 phase / 重置 phaseStartMs 时,把 now 同步重置,避免显示负数
+    setNow(Date.now());
     if (phase === 'idle') return;
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
   }, [phase, phaseStartMs]);
   if (phase === 'idle') return null;
-  const durationMs = now - phaseStartMs;
+  const durationMs = Math.max(0, now - phaseStartMs);
   if (phase === 'compressing') {
     const status = compressStatus;
     const before = status?.before ?? 0;

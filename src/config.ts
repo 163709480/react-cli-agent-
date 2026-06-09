@@ -2,7 +2,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import { resolveProvider } from './llm/providers.js';
-import { loadUserConfig, defaultApiKeyForProvider } from './agent/userConfig.js';
+import { loadUserConfig, defaultApiKeyForProvider, readApiKeyFromFile } from './agent/userConfig.js';
 
 export interface Config {
   openaiApiKey: string;
@@ -62,10 +62,12 @@ export function loadConfig(opts: LoadConfigOptions = {}): Config {
 
   // API key 优先级:
   //   1. env OPENAI_API_KEY(显式)
-  //   2. 对本地 provider(ollama)给占位 key
-  //   3. 在线 provider 没设 env 时给空串(由 App 启动时友好提示)
+  //   2. secrets 文件 ~/.agent/secrets/{provider}.key(用户曾 /config 输入过)
+  //   3. 对本地 provider(ollama)给占位 key
+  //   4. 在线 provider 没设 env 也没 secrets 时给空串(由 App 启动时友好提示)
   const envKey = process.env.OPENAI_API_KEY ?? '';
-  const openaiApiKey = envKey || defaultApiKeyForProvider(providerName);
+  const fileKey = providerName ? (readApiKeyFromFile(providerName) ?? '') : '';
+  const openaiApiKey = envKey || fileKey || defaultApiKeyForProvider(providerName);
 
   return {
     openaiApiKey,

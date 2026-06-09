@@ -95,3 +95,57 @@ export function defaultApiKeyForProvider(providerName?: string): string {
   } catch { /* unknown */ }
   return '';
 }
+
+/**
+ * API key 文件目录 — ~/.agent/secrets/
+ * 单独目录,profile 上 0700,文件 0600。
+ */
+export function getSecretsDir(): string {
+  return path.join(resolveConfigDir(), 'secrets');
+}
+
+export function getApiKeyPath(providerName: string): string {
+  if (!/^[a-zA-Z0-9_-]+$/.test(providerName)) {
+    throw new Error(`Invalid provider name for key storage: "${providerName}"`);
+  }
+  return path.join(getSecretsDir(), `${providerName}.key`);
+}
+
+/**
+ * 写 API key 到 ~/.agent/secrets/{provider}.key,文件 0600。
+ * 不写明文到 config.json(只声明 openaiApiKeyRef 引用)。
+ */
+export function saveApiKey(providerName: string, key: string): string {
+  if (!key) throw new Error('saveApiKey: key is empty');
+  const file = getApiKeyPath(providerName);
+  const dir = path.dirname(file);
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(file, key, 'utf-8');
+  try { fs.chmodSync(file, CONFIG_FILE_MODE); } catch { /* Windows */ }
+  return file;
+}
+
+/**
+ * 从 secrets 目录读 key;文件不存在 / 读失败返回 null。
+ * 自动 trim 末尾换行(避免误写)。
+ */
+export function readApiKeyFromFile(providerName: string): string | null {
+  try {
+    const file = getApiKeyPath(providerName);
+    if (!fs.existsSync(file)) return null;
+    return fs.readFileSync(file, 'utf-8').replace(/\s+$/, '');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * 删除 secrets 里的 key(让下次 /model 弹 ApiKeyInput 重新输入)。
+ * 返回 true = 删了文件;false = 文件本来就不存在(也算成功,no-op)。
+ */
+export function clearApiKey(providerName: string): boolean {
+  const file = getApiKeyPath(providerName);
+  if (!fs.existsSync(file)) return false;
+  fs.unlinkSync(file);
+  return true;
+}

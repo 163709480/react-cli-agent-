@@ -1,6 +1,7 @@
 import type OpenAI from 'openai';
 import type { ChatCompletionTool, ChatCompletionMessageParam } from 'openai/resources/chat/completions.js';
 import type { AgentEvent, Message } from '../agent/types.js';
+import { stripThinking } from './thinking.js';
 
 interface StreamInput {
   client: OpenAI;
@@ -39,8 +40,66 @@ export async function* chatCompletionStream(input: StreamInput): AsyncGenerator<
   const callNames = new Map<number, string>();
   const flushed = new Set<number>();
 
+  // thinking 块过滤 — 部分 provider(minimax 等)在 delta.content 里塞 ``。
+  // 思路:用 buffer 累积 content 增量,只在 chunk 边界(`` 闭合 / finish_reason)flush,
+  // 剥掉 thinking 后再 yield。这样不会因为单 chunk 切断 thinking 块而漏剥。
+  let contentBuf = '';
+  let emittedFromBuf = 0; // 已经 emit 的 contentBuf 长度(用于 slice)
+  function* flushContentBuf(force = false): Generator<AgentEvent, void, void> {
+    const since = contentBuf.slice(emittedFromBuf);
+    if (!since) return;
+    const OPEN = '<think>';
+    const CLOSE = '</think>';
+    const closeIdx = since.indexOf(CLOSE);
+    const openIdx = since.indexOf(OPEN);
+    // 优先处理"since 里同时有开和闭":用状态机一次性剥完
+    if (openIdx >= 0 && closeIdx >= 0 && openIdx < closeIdx) {
+      const safe = stripThinking(since);
+      if (safe) yield { type: 'text_delta', delta: safe };
+      emittedFromBuf += since.length;
+      return;
+    }
+    if (openIdx >= 0) {
+      // 只有开:emit 开之前的(正文),跳到 since 末尾(等待后续 chunk 带来 close)
+      const before = since.slice(0, openIdx);
+      if (before) yield { type: 'text_delta', delta: before };
+      emittedFromBuf += since.length;
+      return;
+    }
+    if (closeIdx >= 0) {
+      // 只有闭:假定这是更早 chunk 开的 thinking 收尾,丢闭之前,emit 闭之后
+      const after = since.slice(closeIdx + CLOSE.length);
+      if (after) yield { type: 'text_delta', delta: after };
+      emittedFromBuf += since.length;
+      return;
+    }
+    // 都没出现,只 emit 到最后一个完整 token 边界(空格/换行),
+    // 保留最后 50 字符作 lookahead 防 `` 跨 chunk。
+    if (force) {
+      const safe = stripThinking(since);
+      if (safe) yield { type: 'text_delta', delta: safe };
+      emittedFromBuf += since.length;
+    } else {
+      const LOOKAHEAD = 50;
+      if (since.length > LOOKAHEAD) {
+        const cut = since.length - LOOKAHEAD;
+        let boundary = cut;
+        const ch = since[boundary];
+        if (ch && !/\s/.test(ch)) {
+          const next = since.slice(cut).search(/\s/);
+          boundary = next >= 0 ? cut + next + 1 : cut;
+        }
+        if (boundary > 0) {
+          yield { type: 'text_delta', delta: since.slice(0, boundary) };
+          emittedFromBuf += boundary;
+        }
+      }
+    }
+  }
+
   for await (const chunk of stream) {
     if (input.signal.aborted) {
+      yield* flushContentBuf(true);
       yield { type: 'done', finishReason: 'abort' };
       return;
     }
@@ -49,7 +108,8 @@ export async function* chatCompletionStream(input: StreamInput): AsyncGenerator<
     const delta = choice.delta;
 
     if (delta.content) {
-      yield { type: 'text_delta', delta: delta.content };
+      contentBuf += delta.content;
+      yield* flushContentBuf(false);
     }
 
     if (delta.tool_calls) {
@@ -63,6 +123,7 @@ export async function* chatCompletionStream(input: StreamInput): AsyncGenerator<
     }
 
     if (choice.finish_reason) {
+      yield* flushContentBuf(true);
       for (const [idx, id] of callIds) {
         if (flushed.has(idx)) continue;
         flushed.add(idx);

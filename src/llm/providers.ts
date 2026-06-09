@@ -42,14 +42,12 @@ const PROVIDERS: Record<string, ProviderPreset> = {
   minimax: {
     id: 'minimax',
     label: 'MiniMax (online)',
-    // TODO(verify): baseUrl/model 需要按 MiniMax 官方 OpenAI-compatible 文档核对,
-    // 当前为占位,正式发布前必须替换。详见 docs/ROADMAP_CURRENT_ASSESSMENT.md P1.2。
     kind: 'online',
-    baseUrl: 'https://api.minimax.chat/v1',
-    defaultModel: 'minimax-chat',
+    baseUrl: 'https://api.minimaxi.com/v1',
+    defaultModel: 'MiniMax-M3',
     requiresApiKey: true,
     apiKeyEnv: 'OPENAI_API_KEY',
-    notes: 'baseUrl/model 需按官方 OpenAI-compatible 文档核对',
+    notes: 'OpenAI 兼容 /v1/chat/completions',
   },
 };
 

@@ -4,7 +4,7 @@
 
 [![License: AGPL-3.0](https://img.shields.io/badge/License-AGPL--3.0-blue.svg)](https://www.gnu.org/licenses/agpl-3.0)
 [![Node](https://img.shields.io/badge/node-%E2%89%A520.0.0-brightgreen.svg)](https://nodejs.org)
-[![Tests](https://img.shields.io/badge/tests-183%20passed-brightgreen.svg)](#测试)
+[![Tests](https://img.shields.io/badge/tests-275%20passed-brightgreen.svg)](#测试)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.5-blue.svg)](https://www.typescriptlang.org/)
 [![Audit: SHA-256 hash chain](https://img.shields.io/badge/audit-SHA--256%20chain-blueviolet)](#-审计日志)
 [![Dependencies: 10](https://img.shields.io/badge/runtime%20deps-10-success)](#-依赖)
@@ -23,9 +23,10 @@
 | 你在意 | 我们怎么做的 |
 |---|---|
 | **代码可读** | 主循环 + 工具层一共 ~3000 行 TS,无任何 agent 框架。每个动作行为可预测。 |
-| **合规审计** | 每个 session 自动写一份 **SHA-256 哈希链 JSONL**。`ts-node verifyChain.ts <file>` 离线验证,任何一行被改、删、插都能秒级发现。 |
+| **合规审计** | 每个 session 自动写一份 **SHA-256 哈希链 JSONL**。`npx tsx src/audit/verifyChain.ts <file>` 离线验证,任何一行被改、删、插都能秒级发现。 |
 | **隐私自托管** | AGPL-3.0 开源,代码透明;接 Ollama / vLLM **完全离线跑**,对话不外发。 |
-| **零供应商锁定** | 走标准 OpenAI Chat Completions;`--provider deepseek` 一键切,或塞 `OPENAI_BASE_URL` 接任何兼容服务。 |
+| **零供应商锁定** | 走标准 OpenAI Chat Completions;`/model deepseek` 运行时一键切,或塞 `OPENAI_BASE_URL` 接任何兼容服务。 |
+| **密钥安全** | API key 走 `~/.agent/secrets/{provider}.key`(0600),`config.json` 只存引用;启动时缺 key 弹密码式输入框,**不回显明文**。 |
 | **可改造** | 工具、确认流程、压缩策略、审计 sink 全部是独立模块(见 `src/`),可插可换。 |
 
 ---
@@ -48,15 +49,20 @@
 - **危险操作醒目确认**——`write_file` / `edit_file` / `delete_file` / `http_fetch`
   触发时弹**红双线框 + ⚠ 警告 + 变更预览**,**必须输入字母 `y`** 才确认,`Enter` 键无效
 - **可插拔工具**——`src/tools/` 独立模块,加一个新工具 = 加一个 `defineTool({...})`
+- **终端原生 paste**——自管 `InputBox` 解析 bracketed paste (`ESC[200~...ESC[201~`),
+  光标位置正确、不会被控制序列污染(v0.5)
+- **CoT 过滤**——`src/llm/thinking.ts` 状态机剥掉 `` 块,
+  适配 minimax-M3 / DeepSeek R1 等默认开 chain-of-thought 的 provider(v0.5)
 
 ### 🧠 LLM & 资源
 
-- **Provider 无关**——走 OpenAI Chat Completions 协议;`--provider deepseek` 切换 / 自定义 `OPENAI_BASE_URL`
+- **Provider 无关**——走 OpenAI Chat Completions 协议;`/model ollama | deepseek | minimax` 运行时切换 / 自定义 `OPENAI_BASE_URL`
 - **真实摘要压缩**——长会话触发 LLM 摘要,失败回退保守截断;v0.2 引入 4 层防御(L1 mid-turn / L2 turn guard / L3 tool guard / L4 hot cut)
 - **资源上限**——`--max-turns 12` / `--max-tool-calls 30`,防止失控(也可由环境变量配)
 - **工具并发执行**——v0.3 引入:连续出现的只读工具(`read_file` / `glob` / `grep`)会按 partition 合成一批并行执行;写入类工具仍按 LLM 调用顺序串行,避免"读到了写之前的数据"。
 - **TodoWrite 任务清单**——v0.4 引入:多步任务时 LLM 自动维护 1-7 条 todo,UI 顶部持续显示进度。
 - **AskUserQuestion 反问**——v0.4 引入:LLM 在 2-4 互斥方案间可弹单/多选题给用户,Esc 取消。
+- **运行时 provider 切换**——v0.5 引入 `/model` + `/config --provider X`,需要 key 时弹密码输入,key 写到 `~/.agent/secrets/{provider}.key`(0600)。
 
 ### 📦 依赖 & 部署
 
@@ -89,8 +95,11 @@ cd ~/anywhere
 react-cli-agent                     # 进交互式 TUI
 react-cli-agent --version           # 看版本
 react-cli-agent --help              # 看帮助
-react-cli-agent "重构 src/foo.ts"     # headless 模式
+react-cli-agent "重构 src/foo.ts"    # headless 模式
 ```
+
+启动时若环境没有 API key 且 provider 又需要,会弹**密码式输入框**(`*` 掩码,Esc 取消),
+输入后写到 `~/.agent/secrets/{provider}.key`(0600),`config.json` 不落明文。
 
 > ⚠️ 改了 `src/` 之后**必须** `npm run build` 一次,`react-cli-agent` 才会用到新代码。
 > 开发期想改完即跑,可以用方式 B 的 `npm run dev`。
@@ -143,13 +152,27 @@ npm run dev -- "列出 src/ 下所有 TypeScript 文件"
 | `--help`, `-h` | 打印帮助并退出 |
 | `--yolo` | 跳过 `confirm` 工具确认;`dangerous` 工具仍要求 `y` |
 | `--allow-mutations` | 允许 `http_fetch POST` 等副作用 |
-| `--provider <name>` | 选内置 provider 预设(`ollama` / `deepseek` / `minimax`) |
+| `--provider <name>` | 启动时选内置 provider 预设(`ollama` / `deepseek` / `minimax`);运行期可改用 `/model` |
 | `--cwd <path>` | 覆盖工作目录 |
 | `--max-turns <n>` | 单次会话最大 LLM turns(默认 12) |
 | `--max-tool-calls <n>` | 单次会话最大 tool calls(默认 30) |
 | `--audit-log <path?>` | 写审计到指定路径(不传值则用默认 `~/.agent/audit/`) |
 | `--no-audit-log` | 关闭审计(开发场景) |
 | `-- "prompt"` | 位置参数 = headless 模式,处理完一轮即退出 |
+
+### 交互期内置命令
+
+| 命令 | 作用 |
+|---|---|
+| `/status` | 查看当前模型、cwd、turn/tool limits、缓存统计 |
+| `/compact` | 强制触发一次上下文压缩 |
+| `/clear` | 清空当前屏幕显示(不清空真实消息历史) |
+| `/reset` | 清空当前 session 上下文(保留 cwd/config) |
+| `/model` | 查看当前 provider;`/model ollama` / `deepseek` / `minimax` 切换 |
+| `/config` | 查看持久化配置;`/config --provider ollama` 改默认 |
+| `/help` | 显示本帮助 |
+
+`/model` 切换时若目标 provider 缺 key 且 env 也没有,会自动弹密码输入框。
 
 ### 示例
 
@@ -163,15 +186,18 @@ react-cli-agent "创建一个 README.md 描述这个项目"
 # HTTP 请求(危险,必确认)
 react-cli-agent --allow-mutations "POST https://api.example.com/webhook body {...}"
 
-# 切换到本地 Ollama
-react-cli-agent config --provider ollama
+# 启动时直接选本地 Ollama
+react-cli-agent --provider ollama "..."    # 离线跑,完全本地
 
-# 切换到 DeepSeek / MiniMax(在线,需要 OPENAI_API_KEY)
-react-cli-agent config --provider deepseek
-react-cli-agent config --provider minimax
+# 启动时选 DeepSeek / MiniMax(在线,需要 OPENAI_API_KEY)
+react-cli-agent --provider deepseek "..."
+react-cli-agent --provider minimax "..."
 
-# 查看当前持久化配置(不含 key)
-react-cli-agent config --show
+# 交互期内动态切换(无 --no-audit-log 等启动 flag)
+/model ollama                # 切到本地,缺 key 时弹密码输入框
+/model deepseek              # 切到 DeepSeek
+/config --provider ollama    # 持久化新默认
+/config --show               # 看当前持久化配置(不含明文 key)
 
 # 关闭审计
 react-cli-agent --no-audit-log "快速提问"
@@ -193,6 +219,8 @@ react-cli-agent --max-turns 5 --max-tool-calls 10
 | `glob` | safe | fast-glob |
 | `http_fetch` | **dangerous** | GET/POST,100KB 截断 |
 | `delete_file` | **dangerous** | 永久删除(禁止删目录) |
+| `ask_user_question` | safe | 2-4 互斥/多选反问,UI 弹单选,Esc 取消(v0.4) |
+| `todo_write` | safe | session-scoped 1-7 条 todo,顶部持续显示(v0.4) |
 
 > `safe` 工具不弹框;`confirm` 工具弹黄色边框;
 > `dangerous` 工具弹**红双线框 + `⚠ DANGEROUS ACTION` 标 + 完整变更预览**(旧/新内容、URL+method 等)。
@@ -281,7 +309,8 @@ jq -c 'select(.type=="llm_usage") | {ts, callIndex, promptTokens, completionToke
 
 | Key | 环境变量 | 默认值 |
 |---|---|---|
-| `openaiApiKey` | `OPENAI_API_KEY` | (必填) |
+| `providerName` | (仅 config 文件) | `deepseek` |
+| `openaiApiKey` | `OPENAI_API_KEY` | (必填,或在 secrets 文件) |
 | `openaiBaseUrl` | `OPENAI_BASE_URL` | `https://api.deepseek.com/v1` |
 | `openaiModel` | `OPENAI_MODEL` | `deepseek-chat` |
 | `maxContextTokens` | `AGENT_MAX_CONTEXT_TOKENS` | `120000` |
@@ -293,6 +322,7 @@ jq -c 'select(.type=="llm_usage") | {ts, callIndex, promptTokens, completionToke
 
 ```json
 {
+  "providerName": "deepseek",
   "openaiModel": "deepseek-chat",
   "maxContextTokens": 120000,
   "maxTurns": 12,
@@ -301,12 +331,19 @@ jq -c 'select(.type=="llm_usage") | {ts, callIndex, promptTokens, completionToke
 }
 ```
 
+### API key 存放
+
+- **环境变量** `OPENAI_API_KEY` 最高优先级,适合 CI / 容器
+- **`~/.agent/secrets/{provider}.key`**(0600,目录 0700)由 `/model` 弹窗输入后写盘;
+  `config.json` 只存 `openaiApiKeyRef: "secrets://{provider}.key"`,不落明文
+- **启动时缺 key**:若 provider 需要 key 且 env 也没有,自动弹密码式输入框(不回显明文)
+
 ---
 
 ## 🧪 测试
 
 ```bash
-npm test           # 183 个测试,30 个文件
+npm test           # 275 个测试,38 个文件
 npm run typecheck  # tsc --noEmit,必须干净
 ```
 
@@ -352,5 +389,16 @@ LLM 适配 ───── 工具 ───── 沙箱
 
 ## 🗺 路线图
 
-见 [`docs/NEXT_STEPS_AND_FEATURE_DESIGN.md`](docs/NEXT_STEPS_AND_FEATURE_DESIGN.md)。
-近期重点:资源护栏(`--max-turns`)、会话持久化、更多 provider 预设。
+见 [`docs/NEXT_STEPS_AND_FEATURE_DESIGN.md`](docs/NEXT_STEPS_AND_FEATURE_DESIGN.md)、
+[`docs/superpowers/`](docs/superpowers/)。
+近期重点:资源护栏、会话持久化、更多 provider 预设、多 agent 协作。
+
+### 已发布版本速览
+
+| 版本 | 重点 |
+|---|---|
+| v0.5 | `/model` & `/config` 切换、密码式 key 输入、`~/.agent/secrets/`、bracketed paste、`` 过滤 |
+| v0.4 | TodoWrite(顶部进度)、AskUserQuestion(2-4 选项反问)、SessionState 注入所有工具 |
+| v0.3 | 工具并发 partition(连续只读工具并行;写工具仍按 LLM 顺序) |
+| v0.2 | 4 层上下文压缩防御、真实摘要、dangerous 工具红双线确认 |
+| v0.1 | ReAct 主循环、6 个基础工具、审计 JSONL + SHA-256 链 |
